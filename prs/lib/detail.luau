@@ -840,11 +840,13 @@ local function guide(d: Detail, p: pr.Pr, g: pr.Guide): { Node }
 			table.insert(children, keyed(with(ui.col(rows), { gap = "xs" }), "files"))
 		end
 		if #s.questions > 0 then
-			local rows: { Node } = { keyed(ui.text({ ui.span("Questions to consider", "dim") }), "h") }
-			for j, q in s.questions do
-				table.insert(rows, keyed(ui.text({ ui.span("•  ", "dim"), ui.span(q) }), "q" .. j))
+			-- One Markdown list, so a question's `code` and links render as the notes' do.
+			local items: { string } = {}
+			for _, q in s.questions do
+				table.insert(items, "- " .. (string.gsub(q, "\n", " ")))
 			end
-			table.insert(children, keyed(with(ui.col(rows), { gap = "xs" }), "questions"))
+			table.insert(children, keyed(ui.text({ ui.span("Questions to consider", "dim") }), "qh"))
+			table.insert(children, markdown(table.concat(items, "\n"), "questions"))
 		end
 		local head = { ui.span(i .. "  ", "dim num"), ui.span(s.title, "strong") }
 		table.insert(out, keyed(ui.card(head, children), "stop" .. i))
