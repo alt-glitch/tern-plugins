@@ -1,0 +1,32 @@
+/* A block region draws in the terminal font; the pull request page reads like a document, so it
+   takes the UI font and some room at the edges. Code, diffs and `mono` spans keep the mono font. */
+.sf-main[data-surface='plugin.prs.list'],
+.sf-dock[data-surface='plugin.prs.list'] {
+	font-family: var(--sans);
+}
+
+/* The list draws in the layer and leaves the dock empty: an empty dock takes no room. */
+.sf-dock[data-surface='plugin.prs.list']:empty {
+	display: none;
+}
+
+.sf-main[data-surface='plugin.prs.list'] {
+	padding: 14px 18px 18px;
+}
+
+.sf-dock[data-surface='plugin.prs.list'] {
+	box-sizing: border-box;
+	padding: 8px 18px;
+	border-top: 1px solid var(--l2);
+}
+
+.sf-dock[data-surface='plugin.prs.list'] .sf-row {
+	min-width: 0;
+	flex-wrap: wrap;
+}
+
+.sf-main[data-surface='plugin.prs.list'] .sf-diff,
+.sf-main[data-surface='plugin.prs.list'] .sf-code,
+.sf-main[data-surface='plugin.prs.list'] .mono {
+	font-family: var(--mono);
+}
