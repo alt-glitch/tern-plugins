@@ -56,6 +56,20 @@ Three tabs follow:
   passed and skipped folded, each with its workflow, its result and how long it took.
 - **Files:** each changed file as Tern's edit card with its diff. Deleted files and diffs over
   400 lines start folded.
+- **Guide** (with its number of stops), only when the list file holds a review guide for this pull
+  request (see [List files](#list-files)).
+
+### Guide
+
+A review guide is a tour of the pull request that a Hermes chat wrote: a summary, then numbered
+stops, each with notes, the files it is about and questions to consider. A file the pull request
+changes is a link: clicking it opens the Files tab scrolled to that file's card. A path the pull
+request does not change, or one past the first 100 files the Files tab reads, stays plain text. When
+the guide names a head commit and the branch has moved on since, a line above the summary says so:
+"This guide was written for 7c1f0e2; the branch is now at 1c52ab3." The block re-reads the list
+file every three seconds, so a new or changed guide shows without reopening the page.
+
+<img src="docs/guide-tab.png" alt="The Guide tab of NousResearch/hermes-agent#153155: Guide 3 in the tab bar, the summary, then three numbered stops with notes, file links such as gateway/run_api.py:41, and Questions to consider; README.md in the third stop is plain text because the pull request does not change it" width="480">
 
 <img src="docs/conversation-filters.png" alt="The Conversation tab of NousResearch/hermes-agent#151819 with Comments and Newest first on: the description cut at 12 lines over a 112 more lines button, then an approval and a change request" width="480">
 
@@ -114,6 +128,7 @@ On a page:
 | Esc, Backspace, ← | Back to the list |
 | `[` `]` | The previous or next pull request in the list |
 | Tab, Shift+Tab, `1` `2` `3` | Conversation, Checks, Files |
+| `4` | Guide, when the pull request has one (Tab and Shift+Tab include it) |
 | ↑ ↓ (or `k` `j`), Space, Page Up/Down, Home/End | Scroll |
 | `o` / `c` | Open on GitHub / copy its link |
 | `m` / `x` / `a` | Merge / close / approve, after a question (Enter or `y` confirms, Esc or `n` cancels; Tab switches the merge method) |
@@ -158,6 +173,32 @@ program, and a new `selected` (or a new `opened_at` with the same one) opens tha
 | `selected` | Optional `owner/repo#number`, any case: opens that pull request's page |
 | `opened_at` | Optional number, such as the time of the pick: a new value opens `selected` again |
 | `cwd` | Optional absolute path of a git checkout: adds the pull request of its current branch |
+| `tab` | Optional, with `selected`: the tab its page opens on, `conversation`, `checks`, `files` or `guide`. Anything else, or `guide` for a pull request without a guide, opens Conversation. A page opened from a click ignores it |
+| `guides` | Optional review guides, keyed by `owner/repo#number` in lower case (the form of `selected`). Each is `head_sha` (optional, the head commit the guide was written for), `written_at` (Unix seconds), `summary` (Markdown) and `stops`: 1 to 20 of `title`, `notes` (Markdown), `files` (up to 20 repository paths, each optionally ending in `:<line>`) and `questions` (up to 5, plain text). Wrong types are skipped |
+
+A guide entry looks like this:
+
+```json
+"tab": "guide",
+"guides": {
+  "nousresearch/hermes-agent#153155": {
+    "head_sha": "1c52ab31cdbff74637aed58a9ebd65b480175564",
+    "written_at": 1763189990,
+    "summary": "Moves `tui_gateway/` under `hermes_agent/`; read the hand fixes first.",
+    "stops": [
+      {
+        "title": "The gateway's entry points",
+        "notes": "`gateway/run_api.py` now imports from `hermes_agent.tui_gateway`.",
+        "files": ["gateway/run.py", "gateway/run_api.py:41"],
+        "questions": ["Does anything import a private name the shim does not re-export?"]
+      }
+    ]
+  }
+}
+```
+
+[hermes-tern](https://github.com/alt-glitch/hermes-tern) writes `guides` and `tab`; the block only
+reads them.
 
 With `cwd`, the block runs `gh pr view` in that directory. When the checkout's branch has a pull
 request that `prs` does not name, it joins the tab with a branch icon and the word `branch` in place
