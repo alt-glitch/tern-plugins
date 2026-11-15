@@ -122,8 +122,9 @@ function M.ref(url: string?, repo: string?, number: number?): Ref?
 	return nil
 end
 
+-- `owner/repo#12`, lower case: GitHub names are case-insensitive, and list files may write either.
 function M.key(ref: Ref): string
-	return ref.repo .. "#" .. ref.number
+	return string.lower(ref.repo) .. "#" .. ref.number
 end
 
 -- T3 Code's check status mapping.
