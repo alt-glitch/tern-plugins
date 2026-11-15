@@ -371,6 +371,18 @@ local function problem_message(problem: Problem): { any }
 	return spans
 end
 
+-- The line above the action bar: freshness, or a refresh problem that kept the last list.
+local function status_line(state: State): string?
+	if state.problem and state.lists[state.tab] then
+		return state.problem.text .. " Showing the last list."
+	elseif state.pending > 0 and state.lists[state.tab] then
+		return "Refreshing…"
+	elseif state.fetched then
+		return "Updated " .. os.date("%H:%M", state.fetched)
+	end
+	return nil
+end
+
 local function picker(state: State): Node
 	local rows = shown(state)
 	settle(state, rows.ids)
@@ -389,7 +401,7 @@ local function picker(state: State): Node
 	local actions: { any } = {
 		{ id = "drafts", label = "Drafts", keys = { "ctrl+d" }, on = state.drafts },
 		-- `retry` is also the button the picker's error card offers.
-		{ id = "retry", label = if state.pending > 0 then "Refreshing…" else "Refresh", keys = { "ctrl+r" } },
+		{ id = "retry", label = "Refresh", keys = { "ctrl+r" } },
 	}
 	if state.problem and state.problem.kind == "missing" then
 		table.insert(actions, { id = "install", label = "Install gh" })
@@ -416,6 +428,10 @@ local function picker(state: State): Node
 		empty = { ui.span(empty, "muted") },
 		actions = actions,
 	}
+	local status = status_line(state)
+	if status then
+		props.strip = { label = status, items = {} }
+	end
 	if not loaded and state.problem then
 		props.state = "error"
 		props.message = problem_message(state.problem)
@@ -423,21 +439,6 @@ local function picker(state: State): Node
 		props.state = "loading"
 	end
 	return ui.node("picker", props)
-end
-
--- A dock line once a list is showing: freshness and a refresh problem that kept the last list.
-local function dock_view(state: State): Node?
-	local spans: { any } = {}
-	if state.problem and state.lists[state.tab] then
-		table.insert(spans, ui.span(state.problem.text, "warning"))
-		table.insert(spans, ui.span("  showing the last list", "muted"))
-	elseif state.fetched then
-		table.insert(spans, ui.span("updated " .. os.date("%H:%M", state.fetched), "muted"))
-	end
-	if #spans == 0 then
-		return nil
-	end
-	return ui.col({ ui.text(spans) })
 end
 
 local function act(state: State, name: string, cx: BlockCx)
@@ -493,7 +494,7 @@ tern.block.define("list", {
 		-- The picker is a sheet: in `layer` at size `screen` it fills the pane and scrolls its own rows,
 		-- where `main` would grow it to its full height. A region draws its root's children, so each
 		-- region root is a column.
-		return { main = ui.col({}), layer = ui.col({ picker(state) }), dock = dock_view(state) }
+		return { main = ui.col({}), layer = ui.col({ picker(state) }) }
 	end,
 
 	key = function(state: State, key: Key, cx: BlockCx): boolean?
