@@ -18,12 +18,32 @@ local function hermes_list(pane: number): string?
 	return if tern.fs.exists(path) then path else nil
 end
 
+-- The block this window opened for each list file, so opening the file again focuses that block
+-- (which re-reads the file and opens its newly selected pull request) instead of adding another.
+local opened: { [string]: number } = {}
+
+-- Focuses the block showing list file `path`, or opens one to the right of `target`; its pane.
+local function show_list(cx: WindowCx, path: string, target: number?): number?
+	local pane = opened[path]
+	for _, p in cx.session:panes() do
+		if pane and p.pane == pane and p.block == KIND and not p.parked then
+			cx.layout:focus(pane)
+			return pane
+		end
+	end
+	local new = cx:new_block(KIND, { path }, "beside", { target = target, dir = "right", ratio = 0.45 })
+	if new then
+		opened[path] = new
+	end
+	return new
+end
+
 local function open_list(cx: WindowCx)
 	local focused = cx.session:focused()
 	-- From a Hermes pane: a block for its session's pull requests, to its right.
 	local list = if focused then hermes_list(focused) else nil
 	if focused and list then
-		cx:new_block(KIND, { list }, "beside", { target = focused, dir = "right", ratio = 0.45 })
+		show_list(cx, list, focused)
 		return
 	end
 	-- Anywhere else: the block already open in this window (each open block polls GitHub), else a new one.
@@ -46,10 +66,14 @@ tern.command({
 	run = open_list,
 })
 
--- `tern open --split right <file>.prs.json` from a program opens its list beside the program's pane.
-tern.route.open(function(req: OpenRequest, _cx: WindowCx): RouteDecision?
-	if string.sub(req.path, -9) == ".prs.json" then
-		return { block = KIND, args = { req.path } }
+-- `tern open <file>.prs.json` from a program shows its list to the right of the focused pane (the
+-- program's, when it asked from a click there), once per file.
+tern.route.open(function(req: OpenRequest, cx: WindowCx): RouteDecision?
+	if string.sub(req.path, -9) ~= ".prs.json" then
+		return nil
 	end
-	return nil
+	if show_list(cx, req.path, cx.session:focused()) then
+		return { handled = true }
+	end
+	return { block = KIND, args = { req.path } }
 end)

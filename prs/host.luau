@@ -38,7 +38,7 @@ type Row = {
 
 -- A list file (`*.prs.json`): pull requests some program picked, such as the ones a Hermes
 -- session linked. See README.md for the format.
-type ListFile = { path: string, text: string, title: string, refs: { pr.Ref }, selected: string? }
+type ListFile = { path: string, text: string, title: string, refs: { pr.Ref }, selected: string?, opened_at: number? }
 
 type State = {
 	cx: BlockCx,
@@ -226,7 +226,8 @@ local function read_file(path: string): ListFile?
 		text = text,
 		title = if title ~= "" then title else "This session",
 		refs = refs,
-		selected = if util.str(data.selected) ~= "" then util.str(data.selected) else nil,
+		selected = if util.str(data.selected) ~= "" then string.lower(util.str(data.selected)) else nil,
+		opened_at = if type(data.opened_at) == "number" then data.opened_at else nil,
 	}
 end
 
@@ -238,7 +239,8 @@ local function open_page(state: State, ref: pr.Ref, seed: { title: string, autho
 	end)
 end
 
--- Re-reads the list file; a change reloads its list, and a new `selected` opens that pull request.
+-- Re-reads the list file; a change reloads its list, and a new `selected` (or the same one picked
+-- again, with a new `opened_at`) opens that pull request.
 local function watch(state: State)
 	if not alive(state) or state.watch or not state.file then
 		return
@@ -252,11 +254,11 @@ local function watch(state: State)
 		local new = if old then read_file(old.path) else nil
 		if old and new and new.text ~= old.text then
 			state.file = new
-			if new.selected and new.selected ~= old.selected then
+			if new.selected and (new.selected ~= old.selected or new.opened_at ~= old.opened_at) then
 				for _, ref in new.refs do
 					if pr.key(ref) == new.selected then
 						state.tab = "file"
-						state.cursor = new.selected
+						state.cursor = pr.key(ref)
 						open_page(state, ref)
 					end
 				end
@@ -614,7 +616,7 @@ tern.block.define("list", {
 			local repo, n = string.match(open, "^([^#]+)#(%d+)$")
 			local ref = pr.ref(nil, repo, tonumber(n))
 			if ref then
-				state.cursor = open
+				state.cursor = pr.key(ref)
 				open_page(state, ref)
 			end
 		end
