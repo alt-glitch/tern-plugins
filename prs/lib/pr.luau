@@ -22,6 +22,10 @@ export type Check = {
 
 export type Reviewer = { login: string, state: string }
 
+-- A layer of a GitHub stack: the pull requests that merge one onto the next, bottom first.
+export type Layer = { position: number, number: number, title: string, state: string, draft: boolean, review: string }
+export type Stack = { size: number, position: number, base: string, layers: { Layer } }
+
 export type Pr = {
 	id: string,
 	repo: string,
@@ -51,6 +55,8 @@ export type Pr = {
 	can_update: boolean,
 	behind_by: number?,
 	auto_merge: string,
+	-- The GitHub stack this pull request is a layer of, if any.
+	stack: Stack?,
 	-- The signed-in user's login, to tell whether they may review.
 	viewer: string,
 }
@@ -89,6 +95,8 @@ local DETAIL_QUERY = [[query($o: String!, $r: String!, $n: Int!, $h: String!) {
       headRefName baseRefName headRefOid viewerCanUpdate
       author { login }
       autoMergeRequest { mergeMethod }
+      stackEntry { position }
+      stack { size baseRefName entries(first: 100) { nodes { position pullRequest { number title state isDraft reviewDecision } } } }
       baseRef { compare(headRef: $h) { behindBy } }
       labels(first: 20) { nodes { name } }
       reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Team { name } } } }
@@ -260,6 +268,31 @@ local function parse_detail(ref: Ref, data: any): Pr?
 		table.insert(methods, "rebase")
 	end
 	local behind = util.obj(util.obj(p.baseRef).compare).behindBy
+	local stack: Stack? = nil
+	local raw_stack = util.obj(p.stack)
+	if type(p.stack) == "table" then
+		local layers: { Layer } = {}
+		for _, n in util.nodes(raw_stack.entries) do
+			local lp = util.obj(n.pullRequest)
+			table.insert(layers, {
+				position = util.num(n.position),
+				number = util.num(lp.number),
+				title = util.str(lp.title),
+				state = STATE[util.str(lp.state)] or "open",
+				draft = lp.isDraft == true,
+				review = util.str(lp.reviewDecision),
+			})
+		end
+		table.sort(layers, function(a, b)
+			return a.position < b.position
+		end)
+		stack = {
+			size = util.num(raw_stack.size),
+			position = util.num(util.obj(p.stackEntry).position),
+			base = util.str(raw_stack.baseRefName),
+			layers = layers,
+		}
+	end
 	return {
 		id = util.str(p.id),
 		repo = ref.repo,
@@ -289,6 +322,7 @@ local function parse_detail(ref: Ref, data: any): Pr?
 		can_update = p.viewerCanUpdate == true,
 		behind_by = if type(behind) == "number" then behind else nil,
 		auto_merge = util.str(util.obj(p.autoMergeRequest).mergeMethod),
+		stack = stack,
 		viewer = util.str(util.obj(util.obj(data).viewer).login),
 	}
 end
@@ -436,11 +470,11 @@ end
 
 -- ── How a PR reads ────────────────────────────────────────────────────────────────────────────
 
-function M.state_label(pr: Pr): string
+function M.state_label(pr: { state: string, draft: boolean }): string
 	return if pr.state == "open" then (if pr.draft then "Draft" else "Open") elseif pr.state == "merged" then "Merged" else "Closed"
 end
 
-function M.state_tone(pr: Pr): string
+function M.state_tone(pr: { state: string, draft: boolean }): string
 	return if pr.state == "merged" then "accent" elseif pr.state == "closed" then "error" elseif pr.draft then "muted" else "success"
 end
 
