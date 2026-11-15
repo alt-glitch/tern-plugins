@@ -8,6 +8,7 @@ local pr = require("./lib/pr")
 local util = require("./lib/util")
 
 local ui = tern.ui
+local clicky, keyed, with = util.clicky, util.keyed, util.with
 
 local POLL_MS = 2 * 60 * 1000
 -- A list file is local and small: read it often, so a link made in the session shows within seconds.
@@ -491,6 +492,51 @@ local function open_selected(state: State)
 	end
 end
 
+-- Tabs a page's strip holds at most; past that it shows the ones around the open page.
+local STRIP_TABS = 6
+
+local STRIP_TONE = { merged = "accent", closed = "error" }
+
+-- The strip above a page: the pull requests of the list it came from as tabs (a click opens one,
+-- `[` and `]` step), or the way back alone when the list has one.
+local function strip(state: State, page: detail.Detail): Node
+	local ids = shown(state).ids
+	local at = table.find(ids, pr.key(page.ref))
+	if #ids < 2 or not at then
+		return detail.back()
+	end
+	local first = math.clamp(at - math.floor(STRIP_TABS / 2), 1, math.max(1, #ids - STRIP_TABS + 1))
+	local last = math.min(#ids, first + STRIP_TABS - 1)
+	-- Titles share the strip, and Tern cuts a tab at about 20 characters: the more tabs, the shorter each.
+	local room = math.min(12, math.floor(64 / (last - first + 1)) - 9)
+	local items = {}
+	for i = first, last do
+		local row = find(state, ids[i])
+		if row then
+			local label: { any } = { ui.span("#" .. row.number, STRIP_TONE[row.state] or (if i == at then nil else "muted")) }
+			-- A conventional-commit prefix (`fix(lint): `) repeats across a stack; the rest tells them apart.
+			local title = string.gsub(string.gsub(row.title, "^%w+%b()!?:%s*", ""), "^%w+!?:%s*", "")
+			if room >= 6 and row.title ~= row.url then
+				local n = utf8.len(title) or #title
+				if n > room then
+					title = string.sub(title, 1, (utf8.offset(title, room) or room + 1) - 1) .. "…"
+				end
+				table.insert(label, ui.span(" " .. title, if i == at then nil else "muted"))
+			end
+			table.insert(items, { id = "pr:" .. row.id, label = label })
+		end
+	end
+	return with(
+		ui.row({
+			keyed(clicky(ui.button("", { icon = "back", variant = "quiet", size = "sm", title = "All pull requests (Esc)" }), "back"), "back"),
+			ui.node("tabs", { key = "prs", active = "pr:" .. pr.key(page.ref), items = items }),
+			ui.node("spacer", { key = "fill", grow = 1 }),
+			keyed(with(ui.text({ ui.span(at .. " of " .. #ids, "dim") }), { title = "[ and ] step through the list" }), "at"),
+		}),
+		{ align = "center", gap = "sm" }
+	)
+end
+
 -- From a pull request page, the previous or next one in the list it came from (`[` and `]`).
 local function step(state: State, by: number)
 	local ids = shown(state).ids
@@ -730,7 +776,7 @@ tern.block.define("list", {
 		if page then
 			-- The page scrolls with the pane; its actions stay in the dock under it.
 			local dock = detail.dock(page)
-			return { main = ui.col({ detail.main(page) }), dock = if dock then ui.col({ dock }) else nil }
+			return { main = ui.col({ detail.main(page, strip(state, page)) }), dock = if dock then ui.col({ dock }) else nil }
 		end
 		-- The picker is a sheet: in `layer` at size `screen` it fills the pane and scrolls its own rows,
 		-- where `main` would grow it to its full height. A region draws its root's children, so each
@@ -764,8 +810,13 @@ tern.block.define("list", {
 		local page = state.page
 		if page then
 			local layer = if ev.ev == "action" and ev.act == "layer" then tonumber(ev.value) else nil
+			local sibling = if ev.ev == "select" and type(ev.item) == "string" then string.match(ev.item, "^pr:(.+)$") else nil
 			if ev.ev == "action" and ev.act == "back" then
 				state.page = nil
+			elseif sibling then
+				-- A tab of the strip: another pull request of the same list.
+				state.cursor = sibling
+				open_selected(state)
 			elseif layer then
 				-- A layer of the page's stack: same repository, opened in place of this page.
 				local ref = pr.ref(nil, page.ref.repo, layer)

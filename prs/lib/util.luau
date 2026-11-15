@@ -1,5 +1,5 @@
 --!strict
--- Small helpers shared by the list and the detail view: times, text and JSON values.
+-- Small helpers shared by the list and the detail view: times, text, JSON values and node props.
 
 local M = {}
 
@@ -110,6 +110,30 @@ end
 function M.login(v: any): string
 	local l = M.str(M.obj(v).login)
 	return if l == "" then "ghost" else l
+end
+
+-- `node` with a click that sends `action` (`"act=value"` arrives as `act` and `value`).
+function M.clicky(node: Node, action: string): Node
+	local props: { [string]: any } = node.p or {}
+	props.actions = { click = action }
+	node.p = props
+	return node
+end
+
+function M.keyed(node: Node, key: string): Node
+	local props: { [string]: any } = node.p or {}
+	props.key = key
+	node.p = props
+	return node
+end
+
+function M.with(node: Node, extra: { [string]: any }): Node
+	local props: { [string]: any } = node.p or {}
+	for k, v in extra do
+		props[k] = v
+	end
+	node.p = props
+	return node
 end
 
 return M
