@@ -5,6 +5,7 @@ plugin package (`plugin.toml` plus Luau), installed on its own.
 
 | Plugin | What it does |
 | --- | --- |
+| [`prs`](prs/) | Browse your pull requests and review requests in a block beside the pane you are in |
 
 ## Install
 

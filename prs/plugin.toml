@@ -1,0 +1,12 @@
+schema = 1
+id = "prs"
+name = "Pull requests"
+version = "0.1.0"
+description = "Browse your pull requests and review requests, from the GitHub CLI."
+icon = "merge"
+host = "host.luau"
+window = "window.luau"
+
+[[blocks]]
+id = "list"
+title = "Pull requests"
