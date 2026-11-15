@@ -31,7 +31,9 @@ export type Detail = {
 	activity_problem: gh.Problem?,
 	files: { pr.File }?,
 	files_problem: gh.Problem?,
-	confirm: string?, -- merge | close | approve
+	confirm: string?, -- merge | close | approve | disable-auto
+	-- The merge method picked in the merge question.
+	method: string?,
 	-- The review form in the dock while it is open; `cursor` is a byte offset into `text`.
 	review: Review?,
 	-- What the list row already knew, drawn while GitHub answers.
@@ -50,6 +52,7 @@ local REVIEW_LABEL = { comment = "Comment", approve = "Approve", request = "Requ
 local LONG_DIFF = 400
 
 local METHOD_LABEL = { merge = "Merge", squash = "Squash and merge", rebase = "Rebase and merge" }
+local METHOD_SHORT = { merge = "Merge commit", squash = "Squash", rebase = "Rebase" }
 local DECISION = {
 	APPROVED = { "Approved", "success" },
 	CHANGES_REQUESTED = { "Changes requested", "error" },
@@ -99,6 +102,7 @@ function M.new(ref: pr.Ref, prefs: Prefs, seed: { title: string, author: string 
 		files = nil,
 		files_problem = nil,
 		confirm = nil,
+		method = nil,
 		review = nil,
 		seed = seed,
 		bots = false,
@@ -154,7 +158,41 @@ function M.set_tab(d: Detail, tab: string, render: () -> ())
 	load_tab(d, render)
 end
 
+-- The merge method to offer: the one picked in the question, else the one this block merged with
+-- last, else the repository's preferred one, each only while the repository allows it.
+local function merge_method(d: Detail, p: pr.Pr): string
+	for _, m in { d.method, d.prefs.method } do
+		if m and table.find(p.methods, m) then
+			return m
+		end
+	end
+	return p.methods[1] or "merge"
+end
+
+local function merge(d: Detail, auto: boolean, cx: BlockCx, render: () -> ())
+	local p = d.pr
+	d.confirm = nil
+	if not p or d.busy or not pr.can(if auto then "merge-auto" else "merge", p) then
+		return
+	end
+	local method = merge_method(d, p)
+	d.busy = "merge"
+	pr.merge(p, method, auto, function(problem)
+		d.busy = nil
+		if problem then
+			cx:toast("error", "Could not merge #" .. p.number, problem.text)
+		else
+			d.prefs.method = method
+		end
+		M.load(d, render)
+	end)
+end
+
 local function act(d: Detail, action: string, cx: BlockCx, render: () -> ())
+	if action == "merge" then
+		merge(d, d.pr ~= nil and pr.can("merge-auto", d.pr), cx, render)
+		return
+	end
 	local p = d.pr
 	d.confirm = nil
 	if not p or d.busy or not pr.can(action, p) then
@@ -310,6 +348,9 @@ local function header(d: Detail): Node
 		table.insert(top, keyed(ui.badge(decision[1], decision[2]), "review"))
 	end
 	table.insert(top, keyed(ui.badge(pr.state_label(p), pr.state_tone(p)), "state"))
+	if p.state == "open" and p.auto_merge ~= "" then
+		table.insert(top, keyed(ui.badge("Auto-merge on (" .. string.lower(p.auto_merge) .. ")", "accent"), "auto"))
+	end
 
 	local verb = if p.state == "merged" then "merged" elseif p.state == "closed" then "closed" else "opened"
 	local when = if p.state == "merged" then p.merged elseif p.state == "closed" then p.closed else p.created
@@ -711,13 +752,34 @@ function M.dock(d: Detail): Node?
 	if d.review then
 		return review_form(d, p, d.review)
 	end
-	local method = p.methods[1] or "merge"
-	if d.confirm then
-		local merge = d.confirm == "merge"
+	local method = merge_method(d, p)
+	if d.confirm == "merge" then
+		local auto = pr.can("merge-auto", p)
+		local row: { Node } = {
+			keyed(ui.text({ ui.span("Merge #" .. p.number .. " into "), ui.span(p.base, "mono"), ui.span(if auto then "? Checks are still running." else "?") }), "q"),
+		}
+		if #p.methods > 1 then
+			local items = {}
+			for _, m in p.methods do
+				table.insert(items, { id = "method:" .. m, label = METHOD_SHORT[m] or m })
+			end
+			table.insert(row, ui.node("tabs", { key = "method", variant = "segmented", active = "method:" .. method, items = items }))
+		end
+		table.insert(row, ui.node("spacer", { key = "fill", grow = 1 }))
+		table.insert(row, keyed(button("Cancel", "cancel", { "escape" }), "no"))
+		if auto then
+			table.insert(row, keyed(button("Merge now", "merge-now", nil), "now"))
+			table.insert(row, keyed(button("Merge when ready", "confirm", { "enter" }, "primary"), "yes"))
+		else
+			table.insert(row, keyed(button(METHOD_LABEL[method] or "Merge", "confirm", { "enter" }, "primary"), "yes"))
+		end
+		return with(ui.row(row), { align = "center", gap = "sm" })
+	elseif d.confirm then
 		local approve = d.confirm == "approve"
-		local question = if merge
-			then { ui.span((METHOD_LABEL[method] or "Merge") .. " #" .. p.number .. " into "), ui.span(p.base, "mono"), ui.span("?") }
-			elseif approve then { ui.span("Approve #" .. p.number .. " as " .. p.viewer .. "?") }
+		local off = d.confirm == "disable-auto"
+		local question = if approve
+			then { ui.span("Approve #" .. p.number .. " as " .. p.viewer .. "?") }
+			elseif off then { ui.span("Turn off auto-merge for #" .. p.number .. "?") }
 			else { ui.span("Close #" .. p.number .. " without merging?") }
 		return with(
 			ui.row({
@@ -725,12 +787,7 @@ function M.dock(d: Detail): Node?
 				ui.node("spacer", { key = "fill", grow = 1 }),
 				keyed(button("Cancel", "cancel", { "escape" }), "no"),
 				keyed(
-					button(
-						if merge then METHOD_LABEL[method] or "Merge" elseif approve then "Approve" else "Close PR",
-						"confirm",
-						{ "enter" },
-						if merge or approve then "primary" else "danger"
-					),
+					button(if approve then "Approve" elseif off then "Turn off" else "Close PR", "confirm", { "enter" }, if approve then "primary" else "danger"),
 					"yes"
 				),
 			}),
@@ -749,12 +806,13 @@ function M.dock(d: Detail): Node?
 	maybe("ready", "Ready for review", { "d" })
 	maybe("update-branch", "Update branch", { "u" })
 	maybe("rerun", "Re-run failed", { "f" })
+	maybe("disable-auto", "Turn off auto-merge", {})
 	table.insert(row, ui.node("spacer", { key = "fill", grow = 1 }))
 	table.insert(row, keyed(button("Copy link", "copy", { "c" }), "copy"))
 	table.insert(row, keyed(button("GitHub", "open", { "o" }), "open"))
 	maybe("review", "Review", { "v" })
 	maybe("approve", "Approve", { "a" })
-	maybe("merge", METHOD_LABEL[method] or "Merge", { "m" }, "primary")
+	maybe("merge", if pr.can("merge-auto", p) then "Merge when ready" else METHOD_LABEL[method] or "Merge", { "m" }, "primary")
 	return with(ui.row(row), { align = "center", gap = "sm" })
 end
 
@@ -774,6 +832,9 @@ function M.event(d: Detail, ev: UiEvent, cx: BlockCx, render: () -> ()): boolean
 		if r then
 			r.kind = string.sub(ev.item, 8)
 		end
+		return true
+	elseif ev.ev == "select" and type(ev.item) == "string" and string.sub(ev.item, 1, 7) == "method:" then
+		d.method = string.sub(ev.item, 8)
 		return true
 	elseif ev.ev == "select" and type(ev.item) == "string" and string.sub(ev.item, 1, 7) == "filter:" then
 		d.prefs.filter = string.sub(ev.item, 8)
@@ -797,6 +858,8 @@ function M.event(d: Detail, ev: UiEvent, cx: BlockCx, render: () -> ()): boolean
 		submit_review(d, cx, render)
 	elseif a == "do" and v == "confirm" and d.confirm then
 		act(d, d.confirm, cx, render)
+	elseif a == "do" and v == "merge-now" then
+		merge(d, false, cx, render)
 	elseif a == "do" and v == "copy" then
 		cx:copy(if d.pr then d.pr.url else d.ref.url)
 		cx:toast("info", "Copied the pull request's URL")
@@ -806,9 +869,10 @@ function M.event(d: Detail, ev: UiEvent, cx: BlockCx, render: () -> ()): boolean
 		d.bots = not d.bots
 	elseif a == "newest" then
 		d.prefs.newest = not d.prefs.newest
-	elseif a == "do" and (v == "merge" or v == "close" or v == "approve") then
+	elseif a == "do" and (v == "merge" or v == "close" or v == "approve" or v == "disable-auto") then
 		if d.pr and pr.can(v, d.pr) then
 			d.confirm = v
+			d.method = nil
 		end
 	elseif a == "do" and type(v) == "string" then
 		act(d, v, cx, render)
@@ -831,7 +895,11 @@ function M.key(d: Detail, key: Key, cx: BlockCx, render: () -> ()): boolean
 		return true
 	end
 	if d.confirm then
-		if name == "enter" or name == "y" then
+		local p = d.pr
+		if d.confirm == "merge" and name == "tab" and p and #p.methods > 1 then
+			local i = table.find(p.methods, merge_method(d, p)) or 1
+			d.method = p.methods[(i - 1 + (if key.shift then -1 else 1)) % #p.methods + 1]
+		elseif name == "enter" or name == "y" then
 			act(d, d.confirm, cx, render)
 		elseif name == "escape" or name == "n" then
 			d.confirm = nil
@@ -869,6 +937,7 @@ function M.key(d: Detail, key: Key, cx: BlockCx, render: () -> ()): boolean
 		local v = if name == "m" then "merge" elseif name == "a" then "approve" else "close"
 		if d.pr and pr.can(v, d.pr) then
 			d.confirm = v
+			d.method = nil
 		end
 	elseif bare and name == "v" then
 		open_review(d, cx)

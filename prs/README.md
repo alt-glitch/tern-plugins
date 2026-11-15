@@ -61,6 +61,18 @@ preferred merge (**Squash and merge**, say). Each shows only when it applies and
 it; Approve shows on other people's open pull requests. Merge, close and approve ask first. **Copy
 link** and **GitHub** work on any pull request.
 
+### Merging
+
+The merge button uses the method you merged with last in this block, or else the repository's
+preferred one. The question before a merge shows the methods the repository allows (**Squash**,
+**Merge commit**, **Rebase**); click one or press Tab to switch. When checks are still running and
+nothing else blocks the merge, the button reads **Merge when ready** and turns on GitHub's
+auto-merge (`gh pr merge --auto`); **Merge now** next to it merges at once. A pull request with
+auto-merge on shows **Auto-merge on (squash)** in its header and a **Turn off auto-merge** button,
+which asks first.
+
+<img src="docs/merge-question.png" alt="The merge question for NousResearch/hermes-agent#155954 while 5 checks are pending: Squash, Merge commit and Rebase with Rebase picked, then Cancel, Merge now and Merge when ready" width="480">
+
 ### Reviews
 
 **Review** (`v`) opens a form under the page: a text field and a choice of **Comment**,
@@ -96,7 +108,7 @@ On a page:
 | Tab, Shift+Tab, `1` `2` `3` | Conversation, Checks, Files |
 | ↑ ↓ (or `k` `j`), Space, Page Up/Down, Home/End | Scroll |
 | `o` / `c` | Open on GitHub / copy its link |
-| `m` / `x` / `a` | Merge / close / approve, after a question (Enter or `y` confirms, Esc or `n` cancels) |
+| `m` / `x` / `a` | Merge / close / approve, after a question (Enter or `y` confirms, Esc or `n` cancels; Tab switches the merge method) |
 | `v` | Opens the review form |
 | `b` | Shows or hides comments by bots |
 | `n` | Conversation newest first, or oldest first (remembered) |

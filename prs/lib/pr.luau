@@ -529,6 +529,10 @@ function M.can(action: string, pr: Pr): boolean
 		return open and not pr.draft and pr.viewer ~= "" and pr.viewer ~= pr.author
 	elseif action == "review" then
 		return open and pr.viewer ~= ""
+	elseif action == "merge-auto" then
+		return M.can("merge", pr) and pr.auto_merge == "" and M.checks_state(pr.checks) == "pending"
+	elseif action == "disable-auto" then
+		return open and pr.can_update and pr.auto_merge ~= ""
 	end
 	return false
 end
@@ -554,11 +558,20 @@ function M.review(pr: Pr, kind: string, body: string, done: (gh.Problem?) -> ())
 	gh.act(args, done)
 end
 
+-- Merges `pr` with `method` (squash | merge | rebase); `auto` merges once its checks pass.
+function M.merge(pr: Pr, method: string, auto: boolean, done: (gh.Problem?) -> ())
+	local args = { "pr", "merge", tostring(pr.number), "-R", pr.repo, "--" .. method }
+	if auto then
+		table.insert(args, "--auto")
+	end
+	gh.act(args, done)
+end
+
 -- Runs `action` on `pr` with `gh`; `done(problem?)` once every command finished.
 function M.act(action: string, pr: Pr, done: (gh.Problem?) -> ())
 	local n, repo = tostring(pr.number), pr.repo
-	if action == "merge" then
-		gh.act({ "pr", "merge", n, "-R", repo, "--" .. (pr.methods[1] or "merge") }, done)
+	if action == "disable-auto" then
+		gh.act({ "pr", "merge", n, "-R", repo, "--disable-auto" }, done)
 	elseif action == "approve" then
 		gh.act({ "pr", "review", n, "-R", repo, "--approve" }, done)
 	elseif action == "rerun" then
