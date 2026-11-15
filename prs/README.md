@@ -38,23 +38,51 @@ labels. The title and author show at once from the list row while GitHub answers
 follow:
 
 - **Conversation:** the description, then every comment, review, review thread and commit in
-  order. Markdown renders as Tern draws it, Mermaid diagrams and tables included. Resolved and
+  order. Markdown renders as Tern draws it, Mermaid diagrams and tables included. A long
+  description shows its first 12 lines and a "more lines" button that opens the rest. Resolved and
   outdated threads start folded, and runs of commits fold into one line. Comments and reviews by
   bots (GitHub Apps such as CI and review bots) start hidden behind a line that counts them; their
-  review threads on code lines stay.
+  review threads on code lines stay. **All**, **Comments** and **Commits** at the top choose what
+  shows, and **Newest first** (`n`) turns the order around. The block remembers both.
 - **Checks:** the checks of the latest commit in four groups: needs attention and running open,
   passed and skipped folded, each with its workflow, its result and how long it took.
 - **Files:** each changed file as Tern's edit card with its diff. Deleted files and diffs over
   400 lines start folded.
+
+<img src="docs/conversation-filters.png" alt="The Conversation tab of NousResearch/hermes-agent#151819 with Comments and Newest first on: the description cut at 12 lines over a 112 more lines button, then an approval and a change request" width="480">
 
 <img src="docs/page-files.png" alt="The Files tab of NousResearch/hermes-agent#155575: an Added card for apps/desktop/e2e/design-mode-native.spec.ts +132 −0 with its diff, syntax highlighted" width="480">
 
 <img src="docs/page-checks.png" alt="The Checks tab of NousResearch/hermes-agent#151819: 16 passing, 20 skipped on d83337d, the Passed group open with each check, its workflow and duration" width="480">
 
 The buttons under the page act on the pull request: **Close**, **Reopen**, **Ready for
-review**, **Update branch**, **Re-run failed**, **Approve** and the repository's preferred merge
-(**Squash and merge**, say). Each shows only when it applies and GitHub lets you do it; Approve
-shows on other people's open pull requests. Merge, close and approve ask first. **Copy link** and **GitHub** work on any pull request.
+review**, **Update branch**, **Re-run failed**, **Review**, **Approve** and the repository's
+preferred merge (**Squash and merge**, say). Each shows only when it applies and GitHub lets you do
+it; Approve shows on other people's open pull requests. Merge, close and approve ask first. **Copy
+link** and **GitHub** work on any pull request.
+
+### Merging
+
+The merge button uses the method you merged with last in this block, or else the repository's
+preferred one. The question before a merge shows the methods the repository allows (**Squash**,
+**Merge commit**, **Rebase**); click one or press Tab to switch. When checks are still running and
+nothing else blocks the merge, the button reads **Merge when ready** and turns on GitHub's
+auto-merge (`gh pr merge --auto`); **Merge now** next to it merges at once. A pull request with
+auto-merge on shows **Auto-merge on (squash)** in its header and a **Turn off auto-merge** button,
+which asks first.
+
+<img src="docs/merge-question.png" alt="The merge question for NousResearch/hermes-agent#155954 while 5 checks are pending: Squash, Merge commit and Rebase with Rebase picked, then Cancel, Merge now and Merge when ready" width="480">
+
+### Reviews
+
+**Review** (`v`) opens a form under the page: a text field and a choice of **Comment**,
+**Approve** or **Request changes**. Tab switches the choice. Comment and Request changes need some
+text; Approve may go without. ctrl+Enter or the button sends it, and the page reads GitHub again.
+Esc closes the form and drops the text. On your own pull request, and on a draft, only Comment
+shows, because GitHub refuses the other two there. While the form is open, every key goes to the
+text field, so typing `m` or `x` does not merge or close.
+
+<img src="docs/review-form.png" alt="The review form under the page of NousResearch/hermes-agent#155575: Comment, Approve and Request changes with Request changes picked, the button Request changes, and the text field" width="480">
 
 ## Keys
 
@@ -80,10 +108,21 @@ On a page:
 | Tab, Shift+Tab, `1` `2` `3` | Conversation, Checks, Files |
 | ↑ ↓ (or `k` `j`), Space, Page Up/Down, Home/End | Scroll |
 | `o` / `c` | Open on GitHub / copy its link |
-| `m` / `x` / `a` | Merge / close / approve, after a question (Enter or `y` confirms, Esc or `n` cancels) |
+| `m` / `x` / `a` | Merge / close / approve, after a question (Enter or `y` confirms, Esc or `n` cancels; Tab switches the merge method) |
+| `v` | Opens the review form |
 | `b` | Shows or hides comments by bots |
+| `n` | Conversation newest first, or oldest first (remembered) |
 | `d` / `u` / `f` | Ready for review / update branch / re-run failed jobs |
 | `r`, ctrl+r | Reads it again |
+
+In the review form:
+
+| Key | Does |
+| --- | --- |
+| type, Enter | Writes the review; Enter starts a new line |
+| Tab, Shift+Tab | Comment, Approve, Request changes |
+| ctrl+Enter | Sends the review |
+| Esc | Closes the form and drops the text |
 
 ## List files
 
@@ -110,6 +149,13 @@ program, and a new `selected` (or a new `opened_at` with the same one) opens tha
 | `prs` | Each a GitHub pull request URL, or `repository` and `number` |
 | `selected` | Optional `owner/repo#number`, any case: opens that pull request's page |
 | `opened_at` | Optional number, such as the time of the pick: a new value opens `selected` again |
+| `cwd` | Optional absolute path of a git checkout: adds the pull request of its current branch |
+
+With `cwd`, the block runs `gh pr view` in that directory. When the checkout's branch has a pull
+request that `prs` does not name, it joins the tab with a branch icon and the word `branch` in place
+of its state. It is read again on every refresh, so switching branches changes it.
+
+<img src="docs/branch-pr.png" alt="The This session tab: the pull request of the checkout's branch, NousResearch/hermes-agent#155954, with a branch icon and the word branch, above a pull request the file names" width="480">
 
 The file name must end in `.prs.json`. Run `tern open <file>` from a pane to open it to the right of
 that pane. Opening the same file again focuses its block instead of adding one. `tern open` then
