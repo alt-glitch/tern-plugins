@@ -24,6 +24,8 @@ export type Detail = {
 	files: { pr.File }?,
 	files_problem: gh.Problem?,
 	confirm: string?, -- merge | close | approve
+	-- The review form in the dock while it is open; `cursor` is a byte offset into `text`.
+	review: Review?,
 	-- What the list row already knew, drawn while GitHub answers.
 	seed: { title: string, author: string }?,
 	-- Comments and reviews by GitHub Apps show; hidden by default, as T3 Code does.
@@ -33,7 +35,10 @@ export type Detail = {
 	generation: number,
 }
 
+export type Review = { text: string, cursor: number, kind: string }
+
 local TABS = { "conversation", "checks", "files" }
+local REVIEW_LABEL = { comment = "Comment", approve = "Approve", request = "Request changes" }
 local LONG_DIFF = 400
 
 local METHOD_LABEL = { merge = "Merge", squash = "Squash and merge", rebase = "Rebase and merge" }
@@ -72,6 +77,7 @@ function M.new(ref: pr.Ref, seed: { title: string, author: string }?): Detail
 		files = nil,
 		files_problem = nil,
 		confirm = nil,
+		review = nil,
 		seed = seed,
 		bots = false,
 		busy = nil,
@@ -140,6 +146,87 @@ local function act(d: Detail, action: string, cx: BlockCx, render: () -> ())
 		end
 		M.load(d, render)
 	end)
+end
+
+-- Whether the dock holds a question or the review form, which take every key until they close.
+function M.modal(d: Detail): boolean
+	return d.confirm ~= nil or d.review ~= nil
+end
+
+local function open_review(d: Detail, cx: BlockCx)
+	if d.pr and pr.can("review", d.pr) and not d.busy then
+		d.confirm = nil
+		d.review = { text = "", cursor = 0, kind = "comment" }
+		-- The field exists only after this frame is drawn, so the focus op waits a tick.
+		tern.timer(0, function()
+			cx:frame({ { "focus", "dock.review.body" } })
+		end)
+	end
+end
+
+local function submit_review(d: Detail, cx: BlockCx, render: () -> ())
+	local p, r = d.pr, d.review
+	if not p or not r or d.busy then
+		return
+	end
+	local body = string.match(r.text, "^%s*(.-)%s*$") or ""
+	if body == "" and r.kind ~= "approve" then
+		cx:toast("error", REVIEW_LABEL[r.kind] .. " needs some text")
+		return
+	end
+	d.busy = "review"
+	pr.review(p, r.kind, body, function(problem)
+		d.busy = nil
+		if problem then
+			cx:toast("error", "Could not review #" .. p.number, problem.text)
+			render()
+			return
+		end
+		d.review = nil
+		cx:toast("info", "Review sent on #" .. p.number)
+		M.load(d, render)
+	end)
+end
+
+local function utf16_len(s: string): number
+	local n = 0
+	for _, c in utf8.codes(s) do
+		n += if c > 0xFFFF then 2 else 1
+	end
+	return n
+end
+
+-- Edits the review text from a key; the form owns every key while it is open.
+local function review_key(d: Detail, r: Review, key: Key, cx: BlockCx, render: () -> ())
+	local name, text, at = key.name, r.text, r.cursor
+	if name == "escape" then
+		d.review = nil
+	elseif name == "enter" and (key.ctrl or key.meta) then
+		submit_review(d, cx, render)
+	elseif name == "tab" and d.pr then
+		local kinds = pr.review_kinds(d.pr)
+		local i = table.find(kinds, r.kind) or 1
+		r.kind = kinds[(i - 1 + (if key.shift then -1 else 1)) % #kinds + 1]
+	elseif name == "enter" then
+		r.text, r.cursor = string.sub(text, 1, at) .. "\n" .. string.sub(text, at + 1), at + 1
+	elseif name == "backspace" and at > 0 then
+		local from = utf8.offset(text, -1, at + 1) or at
+		r.text, r.cursor = string.sub(text, 1, from - 1) .. string.sub(text, at + 1), from - 1
+	elseif name == "delete" and at < #text then
+		local to = utf8.offset(text, 2, at + 1) or (at + 2)
+		r.text = string.sub(text, 1, at) .. string.sub(text, to)
+	elseif name == "left" and at > 0 then
+		r.cursor = (utf8.offset(text, -1, at + 1) or at) - 1
+	elseif name == "right" and at < #text then
+		r.cursor = (utf8.offset(text, 2, at + 1) or (at + 2)) - 1
+	elseif name == "home" or (key.ctrl and name == "a") then
+		r.cursor = 0
+	elseif name == "end" or (key.ctrl and name == "e") then
+		r.cursor = #text
+	elseif key.text and key.text ~= "" and not key.ctrl then
+		local typed = string.gsub(key.text, "\r\n?", "\n")
+		r.text, r.cursor = string.sub(text, 1, at) .. typed .. string.sub(text, at + 1), at + #typed
+	end
 end
 
 -- ── Drawing ───────────────────────────────────────────────────────────────────────────────────
@@ -525,10 +612,50 @@ local function button(label: string, action: string, keys: { string }?, variant:
 	return clicky(ui.button(label, { keys = keys, variant = variant :: any, disabled = disabled, size = "sm" }), "do=" .. action)
 end
 
+local function review_form(d: Detail, p: pr.Pr, r: Review): Node
+	local kinds = pr.review_kinds(p)
+	local items = {}
+	for _, k in kinds do
+		table.insert(items, { id = "review:" .. k, label = REVIEW_LABEL[k] })
+	end
+	local sending = d.busy == "review"
+	local top: { Node } = {
+		keyed(ui.text({ ui.span("Review #" .. p.number, "strong") }), "q"),
+	}
+	if #kinds > 1 then
+		table.insert(top, ui.node("tabs", { key = "kind", variant = "segmented", active = "review:" .. r.kind, items = items }))
+	end
+	table.insert(top, ui.node("spacer", { key = "fill", grow = 1 }))
+	table.insert(top, keyed(button("Cancel", "review-cancel", { "escape" }), "no"))
+	table.insert(
+		top,
+		keyed(button(if sending then "Sending…" else REVIEW_LABEL[r.kind], "review-submit", { "ctrl+enter" }, if r.kind == "request" then "danger" else "primary", sending), "yes")
+	)
+	return keyed(
+		with(
+			ui.col({
+				keyed(with(ui.row(top), { align = "center", gap = "sm" }), "top"),
+				ui.node("editor", {
+					key = "body",
+					text = r.text,
+					cursor = utf16_len(string.sub(r.text, 1, r.cursor)),
+					placeholder = if r.kind == "approve" then "Optional note. Tab changes the verdict, ctrl+Enter sends." else "Write a review. Tab changes the verdict, ctrl+Enter sends.",
+					maxLines = 8,
+				}),
+			}),
+			{ gap = "sm" }
+		),
+		"review"
+	)
+end
+
 function M.dock(d: Detail): Node?
 	local p = d.pr
 	if not p then
 		return nil
+	end
+	if d.review then
+		return review_form(d, p, d.review)
 	end
 	local method = p.methods[1] or "merge"
 	if d.confirm then
@@ -571,6 +698,7 @@ function M.dock(d: Detail): Node?
 	table.insert(row, ui.node("spacer", { key = "fill", grow = 1 }))
 	table.insert(row, keyed(button("Copy link", "copy", { "c" }), "copy"))
 	table.insert(row, keyed(button("GitHub", "open", { "o" }), "open"))
+	maybe("review", "Review", { "v" })
 	maybe("approve", "Approve", { "a" })
 	maybe("merge", METHOD_LABEL[method] or "Merge", { "m" }, "primary")
 	return with(ui.row(row), { align = "center", gap = "sm" })
@@ -587,6 +715,15 @@ function M.event(d: Detail, ev: UiEvent, cx: BlockCx, render: () -> ()): boolean
 	if ev.ev == "select" and type(ev.item) == "string" and table.find(TABS, ev.item) then
 		M.set_tab(d, ev.item, render)
 		return true
+	elseif ev.ev == "select" and type(ev.item) == "string" and string.sub(ev.item, 1, 7) == "review:" then
+		local r = d.review
+		if r then
+			r.kind = string.sub(ev.item, 8)
+		end
+		return true
+	elseif ev.ev == "focus" and d.review and ev.id then
+		cx:frame({ { "focus", ev.id } })
+		return true
 	elseif ev.ev ~= "action" then
 		return false
 	end
@@ -595,6 +732,12 @@ function M.event(d: Detail, ev: UiEvent, cx: BlockCx, render: () -> ()): boolean
 		M.set_tab(d, v, render)
 	elseif a == "do" and v == "cancel" then
 		d.confirm = nil
+	elseif a == "do" and v == "review" then
+		open_review(d, cx)
+	elseif a == "do" and v == "review-cancel" then
+		d.review = nil
+	elseif a == "do" and v == "review-submit" then
+		submit_review(d, cx, render)
 	elseif a == "do" and v == "confirm" and d.confirm then
 		act(d, d.confirm, cx, render)
 	elseif a == "do" and v == "copy" then
@@ -623,6 +766,11 @@ end
 -- A key in the view; false for a key it leaves to the block (Escape goes back to the list).
 function M.key(d: Detail, key: Key, cx: BlockCx, render: () -> ()): boolean
 	local name = key.name
+	local r = d.review
+	if r then
+		review_key(d, r, key, cx, render)
+		return true
+	end
 	if d.confirm then
 		if name == "enter" or name == "y" then
 			act(d, d.confirm, cx, render)
@@ -661,6 +809,8 @@ function M.key(d: Detail, key: Key, cx: BlockCx, render: () -> ()): boolean
 		if d.pr and pr.can(v, d.pr) then
 			d.confirm = v
 		end
+	elseif bare and name == "v" then
+		open_review(d, cx)
 	elseif bare and name == "d" then
 		act(d, "ready", cx, render)
 	elseif bare and name == "u" then

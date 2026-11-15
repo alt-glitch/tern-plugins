@@ -656,10 +656,11 @@ tern.block.define("list", {
 		local page = state.page
 		if page then
 			local bare = not key.ctrl
-			if page.confirm == nil and (key.name == "escape" or key.name == "backspace" or (bare and key.name == "left")) then
+			local modal = detail.modal(page)
+			if not modal and (key.name == "escape" or key.name == "backspace" or (bare and key.name == "left")) then
 				state.page = nil
 				return true
-			elseif page.confirm == nil and bare and (key.name == "[" or key.name == "]") then
+			elseif not modal and bare and (key.name == "[" or key.name == "]") then
 				step(state, if key.name == "]" then 1 else -1)
 				return true
 			end

@@ -52,9 +52,21 @@ follow:
 <img src="docs/page-checks.png" alt="The Checks tab of NousResearch/hermes-agent#151819: 16 passing, 20 skipped on d83337d, the Passed group open with each check, its workflow and duration" width="480">
 
 The buttons under the page act on the pull request: **Close**, **Reopen**, **Ready for
-review**, **Update branch**, **Re-run failed**, **Approve** and the repository's preferred merge
-(**Squash and merge**, say). Each shows only when it applies and GitHub lets you do it; Approve
-shows on other people's open pull requests. Merge, close and approve ask first. **Copy link** and **GitHub** work on any pull request.
+review**, **Update branch**, **Re-run failed**, **Review**, **Approve** and the repository's
+preferred merge (**Squash and merge**, say). Each shows only when it applies and GitHub lets you do
+it; Approve shows on other people's open pull requests. Merge, close and approve ask first. **Copy
+link** and **GitHub** work on any pull request.
+
+### Reviews
+
+**Review** (`v`) opens a form under the page: a text field and a choice of **Comment**,
+**Approve** or **Request changes**. Tab switches the choice. Comment and Request changes need some
+text; Approve may go without. ctrl+Enter or the button sends it, and the page reads GitHub again.
+Esc closes the form and drops the text. On your own pull request, and on a draft, only Comment
+shows, because GitHub refuses the other two there. While the form is open, every key goes to the
+text field, so typing `m` or `x` does not merge or close.
+
+<img src="docs/review-form.png" alt="The review form under the page of NousResearch/hermes-agent#155575: Comment, Approve and Request changes with Request changes picked, the button Request changes, and the text field" width="480">
 
 ## Keys
 
@@ -81,9 +93,19 @@ On a page:
 | ↑ ↓ (or `k` `j`), Space, Page Up/Down, Home/End | Scroll |
 | `o` / `c` | Open on GitHub / copy its link |
 | `m` / `x` / `a` | Merge / close / approve, after a question (Enter or `y` confirms, Esc or `n` cancels) |
+| `v` | Opens the review form |
 | `b` | Shows or hides comments by bots |
 | `d` / `u` / `f` | Ready for review / update branch / re-run failed jobs |
 | `r`, ctrl+r | Reads it again |
+
+In the review form:
+
+| Key | Does |
+| --- | --- |
+| type, Enter | Writes the review; Enter starts a new line |
+| Tab, Shift+Tab | Comment, Approve, Request changes |
+| ctrl+Enter | Sends the review |
+| Esc | Closes the form and drops the text |
 
 ## List files
 
