@@ -8,7 +8,7 @@ leaving the terminal. Everything comes from the GitHub CLI.
 ## Open it
 
 - **Pull requests** in the command palette (⌘K), or ⌥⇧⌘P.
-- From a program, `tern open --split right <file>.prs.json` (see [List files](#list-files)).
+- From a program, `tern open <file>.prs.json` (see [List files](#list-files)).
 
 The block opens to the right of the focused pane. Outside a Hermes pane, if a block is already
 open in the window, Tern focuses it instead, because each open block polls GitHub.
@@ -89,7 +89,7 @@ On a page:
 
 A list file names pull requests some program picked; opening one shows them in a tab of its own,
 in front of the others. The block re-reads the file every three seconds, so the tab follows the
-program, and a new `selected` opens that pull request's page.
+program, and a new `selected` (or a new `opened_at` with the same one) opens that pull request's page.
 
 ```json
 {
@@ -108,10 +108,13 @@ program, and a new `selected` opens that pull request's page.
 | `version` | `1`. A file with another version is ignored |
 | `title` | The tab's label; default `This session` |
 | `prs` | Each a GitHub pull request URL, or `repository` and `number` |
-| `selected` | Optional `owner/repo#number`: opens that pull request's page |
+| `selected` | Optional `owner/repo#number`, any case: opens that pull request's page |
+| `opened_at` | Optional number, such as the time of the pick: a new value opens `selected` again |
 
-The file name must end in `.prs.json`. Run `tern open --split right <file>` from a pane to open
-it beside that pane.
+The file name must end in `.prs.json`. Run `tern open <file>` from a pane to open it to the right of
+that pane. Opening the same file again focuses its block instead of adding one. `tern open` then
+exits 1 ("cannot open in a file block") although the block shows, because the plugin handled the
+open; a program should not read that as a failure.
 
 ### Hermes
 
