@@ -230,8 +230,8 @@ local function read_file(path: string): ListFile?
 	}
 end
 
-local function open_page(state: State, ref: pr.Ref)
-	local page = detail.new(ref)
+local function open_page(state: State, ref: pr.Ref, seed: { title: string, author: string }?)
+	local page = detail.new(ref, seed)
 	state.page = page
 	detail.load(page, function()
 		render(state)
@@ -396,8 +396,9 @@ end
 local function open_selected(state: State)
 	local row = find(state, state.cursor)
 	local ref = if row then pr.ref(row.url, row.repo, row.number) else nil
-	if ref then
-		open_page(state, ref)
+	if row and ref then
+		-- The row's title and author draw at once; the rest follows when GitHub answers.
+		open_page(state, ref, if row.title ~= row.url then { title = row.title, author = row.author } else nil)
 	end
 end
 

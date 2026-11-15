@@ -51,11 +51,15 @@ export type Pr = {
 	can_update: boolean,
 	behind_by: number?,
 	auto_merge: string,
+	-- The signed-in user's login, to tell whether they may review.
+	viewer: string,
 }
 
 export type Activity = {
 	kind: string, -- comment | review | thread | commit
 	author: string,
+	-- Written by a GitHub App (CI bots, review bots).
+	bot: boolean?,
 	at: number,
 	body: string,
 	url: string?,
@@ -76,6 +80,7 @@ local CHECK_FIELDS = [[
   ... on StatusContext { context state targetUrl description createdAt }]]
 
 local DETAIL_QUERY = [[query($o: String!, $r: String!, $n: Int!, $h: String!) {
+  viewer { login }
   repository(owner: $o, name: $r) {
     mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed
     pullRequest(number: $n) {
@@ -95,8 +100,8 @@ local DETAIL_QUERY = [[query($o: String!, $r: String!, $n: Int!, $h: String!) {
 
 local ACTIVITY_QUERY = [[query($o: String!, $r: String!, $n: Int!) {
   repository(owner: $o, name: $r) { pullRequest(number: $n) {
-    comments(last: 50) { nodes { author { login } body createdAt url } }
-    reviews(last: 30) { nodes { author { login } state body submittedAt url } }
+    comments(last: 50) { nodes { author { __typename login } body createdAt url } }
+    reviews(last: 30) { nodes { author { __typename login } state body submittedAt url } }
     reviewThreads(last: 50) { nodes { isResolved isOutdated path line
       comments(first: 20) { nodes { author { login } body createdAt url } } } }
     commits(last: 30) { nodes { commit { oid messageHeadline committedDate url author { name user { login } } } } }
@@ -283,6 +288,7 @@ local function parse_detail(ref: Ref, data: any): Pr?
 		can_update = p.viewerCanUpdate == true,
 		behind_by = if type(behind) == "number" then behind else nil,
 		auto_merge = util.str(util.obj(p.autoMergeRequest).mergeMethod),
+		viewer = util.str(util.obj(util.obj(data).viewer).login),
 	}
 end
 
@@ -314,12 +320,12 @@ function M.activity(ref: Ref, done: ({ Activity }?, gh.Problem?) -> ())
 		local p = util.obj(util.obj(util.obj(data).repository).pullRequest)
 		local items: { Activity } = {}
 		for _, n in util.nodes(p.comments) do
-			table.insert(items, { kind = "comment", author = util.login(n.author), at = util.epoch(n.createdAt) or 0, body = util.str(n.body), url = util.str(n.url) })
+			table.insert(items, { kind = "comment", author = util.login(n.author), bot = util.obj(n.author).__typename == "Bot", at = util.epoch(n.createdAt) or 0, body = util.str(n.body), url = util.str(n.url) })
 		end
 		for _, n in util.nodes(p.reviews) do
 			local body, st = util.str(n.body), util.str(n.state)
 			if string.match(body, "%S") or st ~= "COMMENTED" then
-				table.insert(items, { kind = "review", author = util.login(n.author), at = util.epoch(n.submittedAt) or 0, body = body, url = util.str(n.url), state = st })
+				table.insert(items, { kind = "review", author = util.login(n.author), bot = util.obj(n.author).__typename == "Bot", at = util.epoch(n.submittedAt) or 0, body = body, url = util.str(n.url), state = st })
 			end
 		end
 		for _, t in util.nodes(p.reviewThreads) do
@@ -518,6 +524,8 @@ function M.can(action: string, pr: Pr): boolean
 		return open and (pr.behind_by or 0) > 0
 	elseif action == "rerun" then
 		return open and #M.failed_runs(pr.checks) > 0
+	elseif action == "approve" then
+		return open and not pr.draft and pr.viewer ~= "" and pr.viewer ~= pr.author
 	end
 	return false
 end
@@ -527,6 +535,8 @@ function M.act(action: string, pr: Pr, done: (gh.Problem?) -> ())
 	local n, repo = tostring(pr.number), pr.repo
 	if action == "merge" then
 		gh.act({ "pr", "merge", n, "-R", repo, "--" .. (pr.methods[1] or "merge") }, done)
+	elseif action == "approve" then
+		gh.act({ "pr", "review", n, "-R", repo, "--approve" }, done)
 	elseif action == "rerun" then
 		local runs = M.failed_runs(pr.checks)
 		local left, failed = #runs, nil :: gh.Problem?

@@ -32,12 +32,16 @@ Enter opens the selected pull request's page.
 ## A pull request's page
 
 The header shows the repository and number, the review decision and state, the title, who opened
-it and when, the base and head branches, its size, its reviewers (green approved, red changes
-requested, dim not yet answered) and its labels. Three tabs follow:
+it and when, the base and head branches, its size, whether it conflicts with its base or how far
+behind it is, its reviewers (green approved, red changes requested, dim not yet answered) and its
+labels. The title and author show at once from the list row while GitHub answers. Three tabs
+follow:
 
 - **Conversation:** the description, then every comment, review, review thread and commit in
   order. Markdown renders as Tern draws it, Mermaid diagrams and tables included. Resolved and
-  outdated threads start folded, and runs of commits fold into one line.
+  outdated threads start folded, and runs of commits fold into one line. Comments and reviews by
+  bots (GitHub Apps such as CI and review bots) start hidden behind a line that counts them; their
+  review threads on code lines stay.
 - **Checks:** the checks of the latest commit in four groups: needs attention and running open,
   passed and skipped folded, each with its workflow, its result and how long it took.
 - **Files:** each changed file as Tern's edit card with its diff. Deleted files and diffs over
@@ -48,9 +52,9 @@ requested, dim not yet answered) and its labels. Three tabs follow:
 <img src="docs/page-checks.png" alt="The Checks tab of NousResearch/hermes-agent#151819: 16 passing, 20 skipped on d83337d, the Passed group open with each check, its workflow and duration" width="480">
 
 The buttons under the page act on the pull request: **Close**, **Reopen**, **Ready for
-review**, **Update branch**, **Re-run failed** and the repository's preferred merge (**Squash and
-merge**, say). Each shows only when it applies and GitHub lets you do it. Merge and close ask
-first. **Copy link** and **GitHub** work on any pull request.
+review**, **Update branch**, **Re-run failed**, **Approve** and the repository's preferred merge
+(**Squash and merge**, say). Each shows only when it applies and GitHub lets you do it; Approve
+shows on other people's open pull requests. Merge, close and approve ask first. **Copy link** and **GitHub** work on any pull request.
 
 ## Keys
 
@@ -76,7 +80,8 @@ On a page:
 | Tab, Shift+Tab, `1` `2` `3` | Conversation, Checks, Files |
 | ↑ ↓ (or `k` `j`), Space, Page Up/Down, Home/End | Scroll |
 | `o` / `c` | Open on GitHub / copy its link |
-| `m` / `x` | Merge / close, after a question (Enter or `y` confirms, Esc or `n` cancels) |
+| `m` / `x` / `a` | Merge / close / approve, after a question (Enter or `y` confirms, Esc or `n` cancels) |
+| `b` | Shows or hides comments by bots |
 | `d` / `u` / `f` | Ready for review / update branch / re-run failed jobs |
 | `r`, ctrl+r | Reads it again |
 

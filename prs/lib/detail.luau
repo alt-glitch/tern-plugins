@@ -23,7 +23,11 @@ export type Detail = {
 	activity_problem: gh.Problem?,
 	files: { pr.File }?,
 	files_problem: gh.Problem?,
-	confirm: string?, -- merge | close
+	confirm: string?, -- merge | close | approve
+	-- What the list row already knew, drawn while GitHub answers.
+	seed: { title: string, author: string }?,
+	-- Comments and reviews by GitHub Apps show; hidden by default, as T3 Code does.
+	bots: boolean,
 	busy: string?, -- the action running now
 	-- Bumped on every load, so an answer for an older load or another PR is dropped.
 	generation: number,
@@ -56,7 +60,7 @@ local CHECK = {
 }
 local FILE_TITLE = { added = "Added", copied = "Copied", modified = "Changed", removed = "Deleted", renamed = "Renamed" }
 
-function M.new(ref: pr.Ref): Detail
+function M.new(ref: pr.Ref, seed: { title: string, author: string }?): Detail
 	return {
 		ref = ref,
 		pr = nil,
@@ -68,6 +72,8 @@ function M.new(ref: pr.Ref): Detail
 		files = nil,
 		files_problem = nil,
 		confirm = nil,
+		seed = seed,
+		bots = false,
 		busy = nil,
 		generation = 0,
 	}
@@ -180,11 +186,15 @@ local function header(d: Detail): Node
 		keyed(ui.text({ ui.link(ref.repo .. " #" .. ref.number, ref.url, "dim") }), "ref"),
 	}
 	if not p then
+		local rows: { Node } = { keyed(ui.row(top), "top") }
+		local seed = d.seed
+		if seed then
+			table.insert(rows, keyed(ui.text({ ui.span(seed.title, "strong") }), "title"))
+			table.insert(rows, keyed(ui.text({ ui.span(seed.author, "strong") }), "who"))
+		end
 		local text = if d.problem then d.problem.text else "Reading GitHub…"
-		return ui.col({
-			keyed(ui.row(top), "top"),
-			keyed(ui.text({ ui.span(text, if d.problem then "error" else "muted") }), "title"),
-		})
+		table.insert(rows, keyed(ui.text({ ui.span(text, if d.problem then "error" else "muted") }), "status"))
+		return with(ui.col(rows), { gap = "sm" })
 	end
 	local decision = DECISION[p.review_decision]
 	if decision and p.state == "open" then
@@ -218,6 +228,15 @@ local function header(d: Detail): Node
 			"branch"
 		),
 	}
+	-- Whether the branch can merge as it stands: conflicts, or how far behind its base it is.
+	if p.state == "open" and p.mergeable == "conflicting" then
+		table.insert(rows, keyed(ui.text({ ui.span("Conflicts with " .. p.base .. ". Resolve them before merging.", "error") }), "mergeable"))
+	elseif p.state == "open" and (p.behind_by or 0) > 0 then
+		table.insert(
+			rows,
+			keyed(ui.text({ ui.span(util.plural(p.behind_by :: number, "commit") .. " behind " .. p.base, "warning"), ui.span(" · u updates the branch", "dim") }), "behind")
+		)
+	end
 	if #p.reviewers > 0 then
 		local spans: { any } = { ui.span("Reviewers  ", "dim") }
 		for i, r in p.reviewers do
@@ -322,7 +341,12 @@ local function conversation(d: Detail, p: pr.Pr): { Node }
 		)
 		run = {}
 	end
+	local hidden = 0
 	for i, a in d.activity :: { pr.Activity } do
+		if a.bot and not d.bots then
+			hidden += 1
+			continue
+		end
 		if a.kind == "commit" then
 			table.insert(run, a)
 			continue
@@ -375,6 +399,10 @@ local function conversation(d: Detail, p: pr.Pr): { Node }
 		end
 	end
 	flush()
+	if hidden > 0 or d.bots then
+		local text = if d.bots then "Hide comments by bots" else util.plural(hidden, "comment") .. " by bots hidden. Show them"
+		table.insert(out, clicky(keyed(ui.text({ ui.span(text, "dim"), ui.span("  b", "dim mono") }), "bots"), "bots"))
+	end
 	return out
 end
 
@@ -505,15 +533,25 @@ function M.dock(d: Detail): Node?
 	local method = p.methods[1] or "merge"
 	if d.confirm then
 		local merge = d.confirm == "merge"
+		local approve = d.confirm == "approve"
 		local question = if merge
 			then { ui.span((METHOD_LABEL[method] or "Merge") .. " #" .. p.number .. " into "), ui.span(p.base, "mono"), ui.span("?") }
+			elseif approve then { ui.span("Approve #" .. p.number .. " as " .. p.viewer .. "?") }
 			else { ui.span("Close #" .. p.number .. " without merging?") }
 		return with(
 			ui.row({
 				keyed(ui.text(question), "q"),
 				ui.node("spacer", { key = "fill", grow = 1 }),
 				keyed(button("Cancel", "cancel", { "escape" }), "no"),
-				keyed(button(if merge then METHOD_LABEL[method] or "Merge" else "Close PR", "confirm", { "enter" }, if merge then "primary" else "danger"), "yes"),
+				keyed(
+					button(
+						if merge then METHOD_LABEL[method] or "Merge" elseif approve then "Approve" else "Close PR",
+						"confirm",
+						{ "enter" },
+						if merge or approve then "primary" else "danger"
+					),
+					"yes"
+				),
 			}),
 			{ align = "center", gap = "sm" }
 		)
@@ -533,6 +571,7 @@ function M.dock(d: Detail): Node?
 	table.insert(row, ui.node("spacer", { key = "fill", grow = 1 }))
 	table.insert(row, keyed(button("Copy link", "copy", { "c" }), "copy"))
 	table.insert(row, keyed(button("GitHub", "open", { "o" }), "open"))
+	maybe("approve", "Approve", { "a" })
 	maybe("merge", METHOD_LABEL[method] or "Merge", { "m" }, "primary")
 	return with(ui.row(row), { align = "center", gap = "sm" })
 end
@@ -563,7 +602,9 @@ function M.event(d: Detail, ev: UiEvent, cx: BlockCx, render: () -> ()): boolean
 		cx:toast("info", "Copied the pull request's URL")
 	elseif a == "do" and v == "open" then
 		M.open(d, cx)
-	elseif a == "do" and (v == "merge" or v == "close") then
+	elseif a == "bots" then
+		d.bots = not d.bots
+	elseif a == "do" and (v == "merge" or v == "close" or v == "approve") then
 		if d.pr and pr.can(v, d.pr) then
 			d.confirm = v
 		end
@@ -613,8 +654,10 @@ function M.key(d: Detail, key: Key, cx: BlockCx, render: () -> ()): boolean
 	elseif bare and name == "c" then
 		cx:copy(if d.pr then d.pr.url else d.ref.url)
 		cx:toast("info", "Copied the pull request's URL")
-	elseif bare and (name == "m" or name == "x") then
-		local v = if name == "m" then "merge" else "close"
+	elseif bare and name == "b" then
+		d.bots = not d.bots
+	elseif bare and (name == "m" or name == "x" or name == "a") then
+		local v = if name == "m" then "merge" elseif name == "a" then "approve" else "close"
 		if d.pr and pr.can(v, d.pr) then
 			d.confirm = v
 		end
