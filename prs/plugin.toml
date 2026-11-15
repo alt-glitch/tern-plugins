@@ -6,6 +6,7 @@ description = "Browse your pull requests and review requests, from the GitHub CL
 icon = "merge"
 host = "host.luau"
 window = "window.luau"
+styles = ["prs.css"]
 
 [[blocks]]
 id = "list"
