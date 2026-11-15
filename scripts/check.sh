@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Type-checks every plugin package: Tern's definitions from `tern plugin types`, then luau-lsp.
+# Type-checks every plugin package (Tern's definitions from `tern plugin types`, then luau-lsp) and
+# runs each package's `test/*.test.luau` with the `luau` CLI (LUAU points at it).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 lsp=${LUAU_LSP:-$(command -v luau-lsp || true)}
 [ -n "$lsp" ] || { echo "luau-lsp not found: install it or set LUAU_LSP" >&2; exit 1; }
+luau=${LUAU:-$(command -v luau || true)}
+[ -n "$luau" ] || { echo "luau not found: install it or set LUAU" >&2; exit 1; }
 
 status=0
 for manifest in */plugin.toml; do
@@ -19,5 +22,14 @@ for manifest in */plugin.toml; do
   else
     echo "ok $dir"
   fi
+  for t in "$dir"/test/*.test.luau; do
+    [ -e "$t" ] || continue
+    if ! out=$("$luau" "$t" 2>&1); then
+      echo "$out" | grep -v '^ok '
+      status=1
+    else
+      echo "ok $t"
+    fi
+  done
 done
 exit $status

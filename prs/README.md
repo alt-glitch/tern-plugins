@@ -31,10 +31,18 @@ Enter opens the selected pull request's page.
 
 ## A pull request's page
 
-The header shows the repository and number, the review decision and state, the title, who opened
-it and when, the base and head branches, its size, whether it conflicts with its base or how far
-behind it is, its reviewers (green approved, red changes requested, dim not yet answered) and its
-labels. The title and author show at once from the list row while GitHub answers.
+A strip at the top holds the list's pull requests as tabs, each with its number and the start of its
+title, so you can move between a session's pull requests in place: click a tab, or press `[` and `]`.
+It shows up to six around the open one and counts the rest (**2 of 3**); the arrow at its start goes
+back to the list.
+
+<img src="docs/pr-tabs.png" alt="The page of NousResearch/hermes-agent#156003 opened from This session: tabs for #156004, #156003 and #153155 with #156003 underlined and 2 of 3 at the end, then the repository and number with an Open badge, the title in large type, and Branch, Changes and Reviewers as labeled rows" width="480">
+
+The header shows the repository and number with the review decision and state at its end, the
+title, who opened it and when, then labeled rows: the base and head branches, its size, whether it
+conflicts with its base or how far behind it is, and its reviewers (green approved, red changes
+requested, dim not yet answered). Labels follow. The title and author show at once from the list
+row while GitHub answers.
 
 A pull request in a GitHub stack (pull requests that each merge into the one under it, as `gh stack`
 makes them) gets a folded **Stack · 5 of 13** line. Opened, it lists every layer from the bottom
@@ -46,10 +54,14 @@ page in place.
 Three tabs follow:
 
 - **Conversation:** the description, then every comment, review, review thread and commit in
-  order. Markdown renders as Tern draws it, Mermaid diagrams and tables included. A long
-  description shows its first 12 lines and a "more lines" button that opens the rest. Resolved and
-  outdated threads start folded, and runs of commits fold into one line. Comments and reviews by
-  bots (GitHub Apps such as CI and review bots) start hidden behind a line that counts them; their
+  order. Markdown renders as Tern draws it, Mermaid diagrams and tables included. The HTML that PR
+  templates, review bots and CI reports put in a body renders too: headings, links, bold, code and
+  tables become Markdown, badge images keep their label, and each `<details>` becomes a section you
+  can open and close, already open when it is `<details open>`. A long description without such
+  sections shows its first 12 lines and a "more lines" button that opens the rest. Resolved and
+  outdated threads start folded, and runs of commits fold into one line. Each comment has an arrow
+  at its top right that opens it on GitHub. Comments and reviews by
+  bots (GitHub Apps such as CI and review bots) start hidden behind a button that counts them; their
   review threads on code lines stay. **All**, **Comments** and **Commits** at the top choose what
   shows, and **Newest first** (`n`) turns the order around. The block remembers both.
 - **Checks:** the checks of the latest commit in four groups: needs attention and running open,
@@ -126,7 +138,7 @@ On a page:
 | Key | Does |
 | --- | --- |
 | Esc, Backspace, ← | Back to the list |
-| `[` `]` | The previous or next pull request in the list |
+| `[` `]` | The previous or next pull request in the list (the tabs at the top) |
 | Tab, Shift+Tab, `1` `2` `3` | Conversation, Checks, Files |
 | `4` | Guide, when the pull request has one (Tab and Shift+Tab include it) |
 | ↑ ↓ (or `k` `j`), Space, Page Up/Down, Home/End | Scroll |

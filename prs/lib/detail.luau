@@ -7,6 +7,7 @@
 -- The actions sit in the dock, which also asks before a merge or close.
 
 local gh = require("./gh")
+local markup = require("./markup")
 local pr = require("./pr")
 local util = require("./util")
 
@@ -352,44 +353,59 @@ end
 
 -- ── Drawing ───────────────────────────────────────────────────────────────────────────────────
 
-local function clicky(node: Node, action: string): Node
-	local props: { [string]: any } = node.p or {}
-	props.actions = { click = action }
-	node.p = props
-	return node
-end
+local clicky, keyed, with = util.clicky, util.keyed, util.with
 
-local function keyed(node: Node, key: string): Node
-	local props: { [string]: any } = node.p or {}
-	props.key = key
-	node.p = props
-	return node
-end
-
-local function with(node: Node, extra: { [string]: any }): Node
-	local props: { [string]: any } = node.p or {}
-	for k, v in extra do
-		props[k] = v
+local function parts(list: { markup.Part }): { Node }
+	local out: { Node } = {}
+	for i, part in list do
+		if part.kind == "md" then
+			table.insert(out, keyed(ui.md(part.text), "m" .. i))
+		else
+			local folded = ui.section({ ui.span(part.summary, "muted") }, parts(part.body))
+			table.insert(out, keyed(with(folded, { collapsible = true, collapsed = not part.open }), "d" .. i))
+		end
 	end
-	node.p = props
-	return node
+	return out
 end
 
--- GitHub bodies hold HTML that Tern's Markdown would show as text: comments from PR templates,
--- and `<details>` folds, whose summary becomes a bold line.
+-- Parsed bodies by text: every render draws every comment again, and bot reports run to 10 KB.
+local parsed: { [string]: { markup.Part } } = {}
+local parsed_count = 0
+
+local function parse(body: string): { markup.Part }
+	local list = parsed[body]
+	if not list then
+		if parsed_count >= 500 then
+			parsed, parsed_count = {}, 0
+		end
+		list = markup.parse(body)
+		parsed[body] = list
+		parsed_count += 1
+	end
+	return list
+end
+
+-- Whether a body has `<details>` folds of its own.
+local function folds(body: string): boolean
+	for _, part in parse(body) do
+		if part.kind == "fold" then
+			return true
+		end
+	end
+	return false
+end
+
+-- A GitHub body: its HTML as Markdown (lib/markup.luau), each `<details>` a section that folds.
 local function markdown(body: string, key: string, empty: string?): Node
-	local text = string.gsub(body, "<!%-%-.-%-%->", "")
-	text = string.gsub(text, "<summary>%s*(.-)%s*</summary>", "**%1**")
-	text = string.gsub(text, "</?details[^>]*>", "")
-	-- Review bots badge findings with a linked image (`<a><img alt="P1"></a>`): keep the label.
-	text = string.gsub(text, "<img[^>]-alt=\"([^\"]*)\"[^>]*>", "**%1**")
-	text = string.gsub(text, "<img[^>]*>", "")
-	text = string.gsub(text, "<a%s[^>]*>", "")
-	text = string.gsub(text, "</a>", "")
-	if not string.match(text, "%S") then
+	local list = parse(body)
+	if #list == 0 then
 		return keyed(ui.text({ ui.span(empty or "No description provided.", "muted") }), key)
 	end
-	return keyed(ui.md(text), key)
+	local only = list[1]
+	if #list == 1 and only.kind == "md" then
+		return keyed(ui.md(only.text), key)
+	end
+	return keyed(with(ui.col(parts(list)), { gap = "sm" }), key)
 end
 
 -- The GitHub stack this PR is a layer of, folded to one line: every layer bottom first, this one
@@ -429,13 +445,14 @@ local function header(d: Detail): Node
 	local p = d.pr
 	local ref = d.ref
 	local top: { Node } = {
-		keyed(ui.text({ ui.link(ref.repo .. " #" .. ref.number, ref.url, "dim") }), "ref"),
+		keyed(ui.text({ ui.link(ref.repo .. " #" .. ref.number, ref.url, "muted") }), "ref"),
+		ui.node("spacer", { key = "fill", grow = 1 }),
 	}
 	if not p then
-		local rows: { Node } = { keyed(ui.row(top), "top") }
+		local rows: { Node } = { keyed(with(ui.row(top), { align = "center" }), "top") }
 		local seed = d.seed
 		if seed then
-			table.insert(rows, keyed(ui.text({ ui.span(seed.title, "strong") }), "title"))
+			table.insert(rows, keyed(ui.el("div", { class = "prs-title" }, { ui.text(seed.title) }), "title"))
 			table.insert(rows, keyed(ui.text({ ui.span(seed.author, "strong") }), "who"))
 		end
 		local text = if d.problem then d.problem.text else "Reading GitHub…"
@@ -446,16 +463,52 @@ local function header(d: Detail): Node
 	if decision and p.state == "open" then
 		table.insert(top, keyed(ui.badge(decision[1], decision[2]), "review"))
 	end
-	table.insert(top, keyed(ui.badge(pr.state_label(p), pr.state_tone(p)), "state"))
 	if p.state == "open" and p.auto_merge ~= "" then
-		table.insert(top, keyed(ui.badge("Auto-merge on (" .. string.lower(p.auto_merge) .. ")", "accent"), "auto"))
+		table.insert(top, keyed(ui.badge("Auto-merge (" .. string.lower(p.auto_merge) .. ")", "accent"), "auto"))
 	end
+	table.insert(top, keyed(ui.badge(pr.state_label(p), pr.state_tone(p)), "state"))
 
 	local verb = if p.state == "merged" then "merged" elseif p.state == "closed" then "closed" else "opened"
 	local when = if p.state == "merged" then p.merged elseif p.state == "closed" then p.closed else p.created
+	local facts: { { any } } = {
+		{
+			{ ui.span("Branch", "dim") },
+			{ ui.span(p.base, "mono muted"), ui.span("  ←  ", "dim"), ui.span(p.head, "mono") },
+		},
+		{
+			{ ui.span("Changes", "dim") },
+			{
+				ui.span(util.plural(p.changed_files, "file") .. "   "),
+				ui.span("+" .. util.thousands(p.additions), "ins num"),
+				ui.span("  "),
+				ui.span("−" .. util.thousands(p.deletions), "del num"),
+			},
+		},
+	}
+	-- Whether the branch can merge as it stands: conflicts, or how far behind its base it is.
+	if p.state == "open" and p.mergeable == "conflicting" then
+		table.insert(facts, { { ui.span("Merge", "dim") }, { ui.span("Conflicts with " .. p.base .. ". Resolve them before merging.", "error") } })
+	elseif p.state == "open" and (p.behind_by or 0) > 0 then
+		table.insert(facts, {
+			{ ui.span("Merge", "dim") },
+			{ ui.span(util.plural(p.behind_by :: number, "commit") .. " behind " .. p.base, "warning"), ui.span("   "), ui.span("u", "key"), ui.span(" updates the branch", "dim") },
+		})
+	end
+	if #p.reviewers > 0 then
+		local spans: { any } = {}
+		for i, r in p.reviewers do
+			local tone = if r.state == "APPROVED"
+				then "success"
+				elseif r.state == "CHANGES_REQUESTED" then "error"
+				elseif r.state == "PENDING" then "muted"
+				else nil
+			table.insert(spans, ui.span((if i > 1 then ", " else "") .. r.login, tone))
+		end
+		table.insert(facts, { { ui.span("Reviewers", "dim") }, spans })
+	end
 	local rows: { Node } = {
-		keyed(with(ui.row(top), { gap = "sm", align = "center" }), "top"),
-		keyed(ui.text({ ui.span(p.title, "strong") }), "title"),
+		keyed(with(ui.row(top), { gap = "xs", align = "center" }), "top"),
+		keyed(ui.el("div", { class = "prs-title" }, { ui.text(p.title) }), "title"),
 		keyed(
 			ui.text({
 				ui.span(p.author, "strong"),
@@ -464,50 +517,18 @@ local function header(d: Detail): Node
 			}),
 			"who"
 		),
-		keyed(
-			ui.text({
-				ui.span(p.base, "mono muted"),
-				ui.span("  ←  ", "dim"),
-				ui.span(p.head, "mono muted"),
-				ui.span("    " .. util.plural(p.changed_files, "file") .. "  ", "muted"),
-				ui.span("+" .. util.thousands(p.additions), "success"),
-				ui.span(" "),
-				ui.span("−" .. util.thousands(p.deletions), "error"),
-			}),
-			"branch"
-		),
+		keyed(ui.kv(facts), "facts"),
 	}
-	-- Whether the branch can merge as it stands: conflicts, or how far behind its base it is.
-	if p.state == "open" and p.mergeable == "conflicting" then
-		table.insert(rows, keyed(ui.text({ ui.span("Conflicts with " .. p.base .. ". Resolve them before merging.", "error") }), "mergeable"))
-	elseif p.state == "open" and (p.behind_by or 0) > 0 then
-		table.insert(
-			rows,
-			keyed(ui.text({ ui.span(util.plural(p.behind_by :: number, "commit") .. " behind " .. p.base, "warning"), ui.span(" · u updates the branch", "dim") }), "behind")
-		)
-	end
-	local s = p.stack
-	if s and #s.layers > 1 then
-		table.insert(rows, stack_card(p, s))
-	end
-	if #p.reviewers > 0 then
-		local spans: { any } = { ui.span("Reviewers  ", "dim") }
-		for i, r in p.reviewers do
-			local tone = if r.state == "APPROVED"
-				then "success"
-				elseif r.state == "CHANGES_REQUESTED" then "error"
-				elseif r.state == "PENDING" then "dim"
-				else "muted"
-			table.insert(spans, ui.span((if i > 1 then ", " else "") .. r.login, tone))
-		end
-		table.insert(rows, keyed(ui.text(spans), "reviewers"))
-	end
 	if #p.labels > 0 then
 		local badges: { Node } = {}
 		for i, l in p.labels do
 			table.insert(badges, keyed(ui.badge(l, "neutral"), "l" .. i))
 		end
 		table.insert(rows, keyed(with(ui.row(badges), { gap = "xs", wrap = true }), "labels"))
+	end
+	local s = p.stack
+	if s and #s.layers > 1 then
+		table.insert(rows, stack_card(p, s))
 	end
 	return with(ui.col(rows), { gap = "sm" })
 end
@@ -542,14 +563,24 @@ local function tab_bar(d: Detail): Node
 	return with(ui.row(children), { align = "center", gap = "sm" })
 end
 
+-- A quiet icon that opens `url` on GitHub, for a card head's end.
+local function github_button(url: string): Node
+	return keyed(clicky(ui.button("", { icon = "open", variant = "quiet", size = "sm", title = "Open on GitHub" }), "url=" .. url), "gh")
+end
+
+-- Where the Conversation tab's cards sit: a card head names a child by its full id.
+local CONVERSATION = "main.page.body-conversation."
+
 local function comment(key: string, who: { any }, at: number, body: string, url: string?, empty: string?): Node
 	local head = table.clone(who)
 	table.insert(head, ui.span(" · " .. util.age(at) .. " ago", "dim"))
 	local children: { Node } = { markdown(body, "b", empty) }
+	local props: CardProps = {}
 	if url and url ~= "" then
-		table.insert(children, keyed(ui.text({ ui.link("View on GitHub", url, "dim") }), "link"))
+		table.insert(children, github_button(url))
+		props["end"] = CONVERSATION .. key .. ".gh"
 	end
-	return keyed(ui.card(head, children), key)
+	return keyed(ui.card(head, children, props), key)
 end
 
 local function filter_bar(d: Detail): Node
@@ -575,8 +606,11 @@ local DESCRIPTION_LINES = 12
 
 local function conversation(d: Detail, p: pr.Pr): { Node }
 	local desc = comment("desc:" .. p.repo .. "#" .. p.number, { ui.span(p.author, "strong"), ui.span(" opened this", "muted") }, util.epoch(p.created) or 0, p.body, nil)
-	-- A long description starts clamped, with the card's own "N more lines" control under it.
-	desc = with(desc, { collapsible = true, collapsed = true, preview = { lines = DESCRIPTION_LINES } })
+	-- A long description starts clamped, with the card's own "N more lines" control under it; one
+	-- with folds is short already, and a clamp would hide what an opened fold shows.
+	if not folds(p.body) then
+		desc = with(desc, { collapsible = true, collapsed = true, preview = { lines = DESCRIPTION_LINES } })
+	end
 	local out: { Node } = { keyed(filter_bar(d), "filters"), desc }
 	if not d.activity then
 		local problem = d.activity_problem
@@ -676,10 +710,12 @@ local function conversation(d: Detail, p: pr.Pr): { Node }
 					)
 				)
 			end
+			local props: CardProps = { collapsible = true, collapsed = a.resolved or a.outdated }
 			if a.url and a.url ~= "" then
-				table.insert(children, keyed(ui.text({ ui.link("View on GitHub", a.url, "dim") }), "link"))
+				table.insert(children, github_button(a.url))
+				props["end"] = CONVERSATION .. key .. ".gh"
 			end
-			table.insert(out, keyed(with(ui.card(head, children), { collapsible = true, collapsed = a.resolved or a.outdated }), key))
+			table.insert(out, keyed(ui.card(head, children, props), key))
 		else
 			table.insert(out, comment(key, { ui.span(a.author, "strong"), ui.span(" commented", "muted") }, a.at, a.body, a.url))
 		end
@@ -689,8 +725,8 @@ local function conversation(d: Detail, p: pr.Pr): { Node }
 		table.insert(out, keyed(ui.text({ ui.span(if filter == "commits" then "No commits." else "No comments yet.", "muted") }), "none"))
 	end
 	if hidden > 0 or d.bots then
-		local text = if d.bots then "Hide comments by bots" else util.plural(hidden, "comment") .. " by bots hidden. Show them"
-		table.insert(out, clicky(keyed(ui.text({ ui.span(text, "dim"), ui.span("  b", "dim mono") }), "bots"), "bots"))
+		local label = if d.bots then "Hide comments by bots" else "Show " .. util.plural(hidden, "comment") .. " by bots"
+		table.insert(out, keyed(clicky(ui.button(label, { icon = if d.bots then "eye-off" else "eye", variant = "quiet", size = "sm", keys = { "b" } }), "bots"), "bots"))
 	end
 	return out
 end
@@ -854,12 +890,17 @@ local function guide(d: Detail, p: pr.Pr, g: pr.Guide): { Node }
 	return out
 end
 
-function M.main(d: Detail): Node
+-- The way back to the list, for a page with no strip of sibling pull requests.
+function M.back(): Node
+	return clicky(ui.button("Pull requests", { icon = "back", variant = "quiet", size = "sm", keys = { "escape" } }), "back")
+end
+
+-- `nav` is the host's strip above the header: the list's other pull requests, or `M.back()`.
+function M.main(d: Detail, nav: Node): Node
 	local children: { Node } = {
-		keyed(ui.text({ ui.span("← ", "dim"), ui.span("Pull requests", "dim") }), "back"),
+		keyed(nav, "nav"),
 		keyed(header(d), "head"),
 	}
-	children[1] = clicky(children[1], "back")
 	local p = d.pr
 	if p then
 		table.insert(children, keyed(tab_bar(d), "tabs"))
@@ -1028,6 +1069,8 @@ function M.event(d: Detail, ev: UiEvent, cx: BlockCx, render: () -> ()): boolean
 		if path and file_card(d, path) then
 			open_file(d, path, cx, render)
 		end
+	elseif a == "url" and type(v) == "string" then
+		cx:open(v)
 	elseif a == "do" and v == "cancel" then
 		d.confirm = nil
 	elseif a == "do" and v == "review" then
