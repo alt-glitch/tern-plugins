@@ -2,7 +2,8 @@
 -- One pull request in the block: a header (repository and number, state, title, author, branches,
 -- size, reviewers, checks), then three tabs, as GitHub's and T3 Code's PR pages show them:
 -- Conversation (the description and every comment, review, review thread and commit in order),
--- Checks (grouped, failures first) and Files (each file as Tern's edit card with its diff).
+-- Checks (grouped, failures first) and Files (each file as Tern's edit card with its diff), and a
+-- fourth, Guide, when a Hermes chat wrote a review guide for it into the list file.
 -- The actions sit in the dock, which also asks before a merge or close.
 
 local gh = require("./gh")
@@ -26,7 +27,9 @@ export type Detail = {
 	pr: pr.Pr?,
 	problem: gh.Problem?,
 	loading: boolean,
-	tab: string, -- conversation | checks | files
+	tab: string, -- conversation | checks | files | guide
+	-- The list file's review guide for this pull request; the Guide tab shows only with one.
+	guide: pr.Guide?,
 	activity: { pr.Activity }?,
 	activity_problem: gh.Problem?,
 	files: { pr.File }?,
@@ -48,8 +51,10 @@ export type Detail = {
 export type Review = { text: string, cursor: number, kind: string }
 
 local TABS = { "conversation", "checks", "files" }
+local KNOWN_TABS = { "conversation", "checks", "files", "guide" }
 local REVIEW_LABEL = { comment = "Comment", approve = "Approve", request = "Request changes" }
 local LONG_DIFF = 400
+local REVEAL_MS = 250
 
 local METHOD_LABEL = { merge = "Merge", squash = "Squash and merge", rebase = "Rebase and merge" }
 local METHOD_SHORT = { merge = "Merge commit", squash = "Squash", rebase = "Rebase" }
@@ -89,14 +94,17 @@ function M.prefs(saved: any): Prefs
 	}
 end
 
-function M.new(ref: pr.Ref, prefs: Prefs, seed: { title: string, author: string }?): Detail
+-- `tab` is the list file's `tab`: a known tab, and `guide` only when there is a guide.
+function M.new(ref: pr.Ref, prefs: Prefs, seed: { title: string, author: string }?, guide: pr.Guide?, tab: string?): Detail
+	local first = if tab and table.find(KNOWN_TABS, tab) and (tab ~= "guide" or guide) then tab else "conversation"
 	return {
 		ref = ref,
 		prefs = prefs,
 		pr = nil,
 		problem = nil,
 		loading = false,
-		tab = "conversation",
+		tab = first,
+		guide = guide,
 		activity = nil,
 		activity_problem = nil,
 		files = nil,
@@ -111,7 +119,42 @@ function M.new(ref: pr.Ref, prefs: Prefs, seed: { title: string, author: string 
 	}
 end
 
--- Reads what the current tab needs and has not read yet.
+-- The tabs this page has, in order: Guide last, so 1 2 3 keep their tabs.
+local function tabs(d: Detail): { string }
+	return if d.guide then KNOWN_TABS else TABS
+end
+
+-- `path` without a trailing `:<line>`.
+local function bare_path(s: string): string
+	return string.match(s, "^(.-):%d+$") or s
+end
+
+-- The Files tab's card for a guide file (`f<i>`, as `files` keys them); nil when the PR does not
+-- change it or its files are not read yet.
+local function file_card(d: Detail, s: string): string?
+	local path = bare_path(s)
+	local list: { pr.File } = d.files or {}
+	for i, f in list do
+		if f.path == path then
+			return "f" .. i
+		end
+	end
+	return nil
+end
+
+-- Scrolls the page to the Files tab's card for `path`, after the frame that draws it.
+local function reveal(d: Detail, path: string, cx: BlockCx)
+	local card = file_card(d, path)
+	if card then
+		-- The Files tab draws a hundred diff cards; a reveal sent before they mount finds nothing.
+		tern.timer(REVEAL_MS, function()
+			cx:frame({ { "reveal", "main.page.body-files." .. card, "start" } })
+		end)
+	end
+end
+
+-- Reads what the current tab needs and has not read yet. The Guide tab reads the files too, to
+-- know which of its paths the pull request changes.
 local function load_tab(d: Detail, render: () -> ())
 	local gen = d.generation
 	if d.tab == "conversation" and not d.activity and not d.activity_problem then
@@ -121,7 +164,7 @@ local function load_tab(d: Detail, render: () -> ())
 				render()
 			end
 		end)
-	elseif d.tab == "files" and not d.files and not d.files_problem then
+	elseif (d.tab == "files" or d.tab == "guide") and not d.files and not d.files_problem then
 		pr.files(d.ref, function(files, problem)
 			if d.generation == gen then
 				d.files, d.files_problem = files, problem
@@ -153,9 +196,27 @@ function M.load(d: Detail, render: () -> ())
 end
 
 function M.set_tab(d: Detail, tab: string, render: () -> ())
+	if not table.find(tabs(d), tab) then
+		return
+	end
 	d.tab = tab
 	d.confirm = nil
 	load_tab(d, render)
+end
+
+-- A new, changed or removed guide from the list file; the page stays on its tab when it can.
+function M.set_guide(d: Detail, guide: pr.Guide?, render: () -> ())
+	d.guide = guide
+	if not guide and d.tab == "guide" then
+		M.set_tab(d, "conversation", render)
+	end
+end
+
+-- A guide file was clicked: the Files tab, scrolled to its card. Only a file the read files hold
+-- is clickable, so the card is there to scroll to.
+local function open_file(d: Detail, path: string, cx: BlockCx, render: () -> ())
+	M.set_tab(d, "files", render)
+	reveal(d, path, cx)
 end
 
 -- The merge method to offer: the one picked in the question, else the one this block merged with
@@ -465,6 +526,10 @@ local function tab_bar(d: Detail): Node
 		{ id = "checks", label = if p and #p.checks > 0 then { ui.span("Checks "), ui.span(tostring(#p.checks), "muted") } else "Checks" },
 		{ id = "files", label = if p then { ui.span("Files "), ui.span(tostring(p.changed_files), "muted") } else "Files" },
 	}
+	local g = d.guide
+	if g then
+		table.insert(items, { id = "guide", label = { ui.span("Guide "), ui.span(tostring(#g.stops), "muted") } })
+	end
 	local children: { Node } = { ui.node("tabs", { key = "t", active = d.tab, items = items }) }
 	if p then
 		local tone = pr.checks_tone(p.checks)
@@ -730,6 +795,65 @@ local function files(d: Detail, p: pr.Pr): { Node }
 	return out
 end
 
+-- The review guide: a stale line when the branch moved on, the summary, then a card per stop.
+local function guide(d: Detail, p: pr.Pr, g: pr.Guide): { Node }
+	local out: { Node } = {}
+	local sha = g.head_sha
+	if sha and p.head_oid ~= "" and string.sub(string.lower(p.head_oid), 1, #sha) ~= sha then
+		table.insert(
+			out,
+			keyed(
+				ui.text({
+					ui.span("This guide was written for ", "warning"),
+					ui.span(string.sub(sha, 1, 7), "mono warning"),
+					ui.span("; the branch is now at ", "warning"),
+					ui.span(string.sub(p.head_oid, 1, 7), "mono warning"),
+					ui.span(".", "warning"),
+				}),
+				"stale"
+			)
+		)
+	end
+	local about = "Review guide · " .. util.plural(#g.stops, "stop")
+	if g.written_at then
+		about ..= " · written " .. util.age(g.written_at) .. " ago"
+	end
+	table.insert(out, keyed(ui.text({ ui.span(about, "dim") }), "about"))
+	if string.match(g.summary, "%S") then
+		table.insert(out, markdown(g.summary, "summary"))
+	end
+	for i, s in g.stops do
+		local children: { Node } = {}
+		if string.match(s.notes, "%S") then
+			table.insert(children, markdown(s.notes, "n"))
+		end
+		if #s.files > 0 then
+			local rows: { Node } = {}
+			for j, path in s.files do
+				local key = "f" .. j
+				if file_card(d, path) then
+					table.insert(rows, clicky(keyed(ui.text({ ui.span(path, "mono accent") }), key), "guide-file=" .. i .. "." .. j))
+				else
+					table.insert(rows, keyed(ui.text({ ui.span(path, "mono muted") }), key))
+				end
+			end
+			table.insert(children, keyed(with(ui.col(rows), { gap = "xs" }), "files"))
+		end
+		if #s.questions > 0 then
+			-- One Markdown list, so a question's `code` and links render as the notes' do.
+			local items: { string } = {}
+			for _, q in s.questions do
+				table.insert(items, "- " .. (string.gsub(q, "\n", " ")))
+			end
+			table.insert(children, keyed(ui.text({ ui.span("Questions to consider", "dim") }), "qh"))
+			table.insert(children, markdown(table.concat(items, "\n"), "questions"))
+		end
+		local head = { ui.span(i .. "  ", "dim num"), ui.span(s.title, "strong") }
+		table.insert(out, keyed(ui.card(head, children), "stop" .. i))
+	end
+	return out
+end
+
 function M.main(d: Detail): Node
 	local children: { Node } = {
 		keyed(ui.text({ ui.span("← ", "dim"), ui.span("Pull requests", "dim") }), "back"),
@@ -739,10 +863,16 @@ function M.main(d: Detail): Node
 	local p = d.pr
 	if p then
 		table.insert(children, keyed(tab_bar(d), "tabs"))
-		local body = if d.tab == "checks" then checks(p) elseif d.tab == "files" then files(d, p) else conversation(d, p)
+		local g = d.guide
+		local body = if d.tab == "checks"
+			then checks(p)
+			elseif d.tab == "files" then files(d, p)
+			elseif d.tab == "guide" and g then guide(d, p, g)
+			else conversation(d, p)
 		table.insert(children, keyed(with(ui.col(body), { gap = "md" }), "body-" .. d.tab))
 	end
-	return with(ui.col(children), { gap = "md" })
+	-- Keyed so a reveal can name a card: `main.page.body-files.f<i>`.
+	return keyed(with(ui.col(children), { gap = "md" }), "page")
 end
 
 local function button(label: string, action: string, keys: { string }?, variant: string?, disabled: boolean?): Node
@@ -866,7 +996,7 @@ end
 
 -- A click in the view; false when it is not the view's.
 function M.event(d: Detail, ev: UiEvent, cx: BlockCx, render: () -> ()): boolean
-	if ev.ev == "select" and type(ev.item) == "string" and table.find(TABS, ev.item) then
+	if ev.ev == "select" and type(ev.item) == "string" and table.find(tabs(d), ev.item) then
 		M.set_tab(d, ev.item, render)
 		return true
 	elseif ev.ev == "select" and type(ev.item) == "string" and string.sub(ev.item, 1, 7) == "review:" then
@@ -890,6 +1020,14 @@ function M.event(d: Detail, ev: UiEvent, cx: BlockCx, render: () -> ()): boolean
 	local a, v = ev.act, ev.value
 	if a == "tab" and type(v) == "string" then
 		M.set_tab(d, v, render)
+	elseif a == "guide-file" and type(v) == "string" then
+		local i, j = string.match(v, "^(%d+)%.(%d+)$")
+		local g = d.guide
+		local s = if g and i then g.stops[tonumber(i) :: number] else nil
+		local path = if s and j then s.files[tonumber(j) :: number] else nil
+		if path and file_card(d, path) then
+			open_file(d, path, cx, render)
+		end
 	elseif a == "do" and v == "cancel" then
 		d.confirm = nil
 	elseif a == "do" and v == "review" then
@@ -949,11 +1087,12 @@ function M.key(d: Detail, key: Key, cx: BlockCx, render: () -> ()): boolean
 		return true
 	end
 	local bare = not key.ctrl and not key.alt and not key.meta
-	local at = table.find(TABS, d.tab) or 1
+	local all = tabs(d)
+	local at = table.find(all, d.tab) or 1
 	if name == "tab" then
-		M.set_tab(d, TABS[(at - 1 + (if key.shift then -1 else 1)) % #TABS + 1], render)
-	elseif bare and (name == "1" or name == "2" or name == "3") then
-		M.set_tab(d, TABS[tonumber(name) :: number], render)
+		M.set_tab(d, all[(at - 1 + (if key.shift then -1 else 1)) % #all + 1], render)
+	elseif bare and (name == "1" or name == "2" or name == "3" or (name == "4" and d.guide ~= nil)) then
+		M.set_tab(d, all[tonumber(name) :: number], render)
 	elseif bare and (name == "down" or name == "j") then
 		scroll(cx, "line-down")
 	elseif bare and (name == "up" or name == "k") then

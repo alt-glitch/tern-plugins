@@ -40,7 +40,18 @@ type Row = {
 
 -- A list file (`*.prs.json`): pull requests some program picked, such as the ones a Hermes
 -- session linked. See README.md for the format.
-type ListFile = { path: string, text: string, title: string, refs: { pr.Ref }, selected: string?, opened_at: number?, cwd: string? }
+-- `tab` is the tab `selected` opens on; `guides` holds review guides by `pr.key`.
+type ListFile = {
+	path: string,
+	text: string,
+	title: string,
+	refs: { pr.Ref },
+	selected: string?,
+	opened_at: number?,
+	cwd: string?,
+	tab: string?,
+	guides: { [string]: pr.Guide },
+}
 
 type State = {
 	cx: BlockCx,
@@ -256,6 +267,15 @@ local function read_file(path: string): ListFile?
 			end
 		end
 	end
+	local guides: { [string]: pr.Guide } = {}
+	if type(data.guides) == "table" then
+		for key, value in data.guides do
+			local guide = if type(key) == "string" then pr.guide(value) else nil
+			if guide then
+				guides[string.lower(key)] = guide
+			end
+		end
+	end
 	local title = util.str(data.title)
 	return {
 		path = path,
@@ -265,11 +285,20 @@ local function read_file(path: string): ListFile?
 		selected = if util.str(data.selected) ~= "" then string.lower(util.str(data.selected)) else nil,
 		opened_at = if type(data.opened_at) == "number" then data.opened_at else nil,
 		cwd = if string.sub(util.str(data.cwd), 1, 1) == "/" then util.str(data.cwd) else nil,
+		tab = if util.str(data.tab) ~= "" then string.lower(util.str(data.tab)) else nil,
+		guides = guides,
 	}
 end
 
-local function open_page(state: State, ref: pr.Ref, seed: { title: string, author: string }?)
-	local page = detail.new(ref, state.prefs, seed)
+-- The list file's review guide for this pull request, if it has one.
+local function guide_for(state: State, ref: pr.Ref): pr.Guide?
+	local file = state.file
+	return if file then file.guides[pr.key(ref)] else nil
+end
+
+-- `tab` comes only from the list file's `selected`; a click opens on Conversation.
+local function open_page(state: State, ref: pr.Ref, seed: { title: string, author: string }?, tab: string?)
+	local page = detail.new(ref, state.prefs, seed, guide_for(state, ref), tab)
 	state.page = page
 	detail.load(page, function()
 		render(state)
@@ -296,9 +325,16 @@ local function watch(state: State)
 					if pr.key(ref) == new.selected then
 						state.tab = "file"
 						state.cursor = pr.key(ref)
-						open_page(state, ref)
+						open_page(state, ref, nil, new.tab)
 					end
 				end
+			end
+			-- A new or changed guide shows on the open page without reopening it.
+			local page = state.page
+			if page then
+				detail.set_guide(page, guide_for(state, page.ref), function()
+					render(state)
+				end)
 			end
 			state.pending = 0
 			load_file(state)
@@ -664,12 +700,13 @@ tern.block.define("list", {
 		watch(state)
 		-- Opened for one pull request (a list file's `selected`, or a page open before a restart).
 		local open = if file and file.selected then file.selected else if type(was.page) == "string" then was.page else nil
+		local tab = if file and file.selected then file.tab else nil
 		if open then
 			local repo, n = string.match(open, "^([^#]+)#(%d+)$")
 			local ref = pr.ref(nil, repo, tonumber(n))
 			if ref then
 				state.cursor = pr.key(ref)
-				open_page(state, ref)
+				open_page(state, ref, nil, tab)
 			end
 		end
 		return state

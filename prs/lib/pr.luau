@@ -79,6 +79,54 @@ export type Activity = {
 
 export type File = { path: string, status: string, additions: number, deletions: number, patch: string?, previous: string? }
 
+-- A review guide a Hermes chat wrote for this pull request (a list file's `guides`, README.md).
+export type Stop = { title: string, notes: string, files: { string }, questions: { string } }
+export type Guide = { head_sha: string?, written_at: number?, summary: string, stops: { Stop } }
+
+local MAX_STOPS, MAX_FILES, MAX_QUESTIONS = 20, 20, 5
+
+-- The strings of a list, at most `max`; anything else in it is skipped.
+local function strings(v: any, max: number): { string }
+	local out: { string } = {}
+	if type(v) == "table" then
+		for _, s in v do
+			if type(s) == "string" and string.match(s, "%S") and #out < max then
+				table.insert(out, s)
+			end
+		end
+	end
+	return out
+end
+
+-- A guide from the list file; nil when it has no stop. Wrong types are skipped, not fatal.
+function M.guide(value: any): Guide?
+	if type(value) ~= "table" or type(value.stops) ~= "table" then
+		return nil
+	end
+	local stops: { Stop } = {}
+	for _, s in value.stops do
+		if type(s) == "table" and #stops < MAX_STOPS then
+			local title = util.str(s.title)
+			table.insert(stops, {
+				title = if string.match(title, "%S") then (string.gsub(title, "[\r\n]+", " ")) else "Stop " .. (#stops + 1),
+				notes = util.str(s.notes),
+				files = strings(s.files, MAX_FILES),
+				questions = strings(s.questions, MAX_QUESTIONS),
+			})
+		end
+	end
+	if #stops == 0 then
+		return nil
+	end
+	local sha = string.lower(util.str(value.head_sha))
+	return {
+		head_sha = if string.match(sha, "^%x+$") then sha else nil,
+		written_at = if type(value.written_at) == "number" then value.written_at else nil,
+		summary = util.str(value.summary),
+		stops = stops,
+	}
+end
+
 local CHECK_FIELDS = [[
   __typename
   ... on CheckRun { name status conclusion startedAt completedAt detailsUrl
