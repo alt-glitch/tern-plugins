@@ -174,7 +174,7 @@ program, and a new `selected` (or a new `opened_at` with the same one) opens tha
 | `opened_at` | Optional number, such as the time of the pick: a new value opens `selected` again |
 | `cwd` | Optional absolute path of a git checkout: adds the pull request of its current branch |
 | `tab` | Optional, with `selected`: the tab its page opens on, `conversation`, `checks`, `files` or `guide`. Anything else, or `guide` for a pull request without a guide, opens Conversation. A page opened from a click ignores it |
-| `guides` | Optional review guides, keyed by `owner/repo#number` in lower case (the form of `selected`). Each is `head_sha` (optional, the head commit the guide was written for), `written_at` (Unix seconds), `summary` (Markdown) and `stops`: 1 to 20 of `title`, `notes` (Markdown), `files` (up to 20 repository paths, each optionally ending in `:<line>`) and `questions` (up to 5, plain text). Wrong types are skipped |
+| `guides` | Optional review guides, keyed by `owner/repo#number` in lower case (the form of `selected`). Each is `head_sha` (optional, the head commit the guide was written for), `written_at` (Unix seconds), `summary` (Markdown) and `stops`: 1 to 20 of `title`, `notes` (Markdown), `files` (up to 20 repository paths, each optionally ending in `:<line>`) and `questions` (up to 5, Markdown). Wrong types are skipped |
 
 A guide entry looks like this:
 
