@@ -726,8 +726,15 @@ tern.block.define("list", {
 	event = function(state: State, ev: UiEvent, cx: BlockCx)
 		local page = state.page
 		if page then
+			local layer = if ev.ev == "action" and ev.act == "layer" then tonumber(ev.value) else nil
 			if ev.ev == "action" and ev.act == "back" then
 				state.page = nil
+			elseif layer then
+				-- A layer of the page's stack: same repository, opened in place of this page.
+				local ref = pr.ref(nil, page.ref.repo, layer)
+				if ref then
+					open_page(state, ref)
+				end
 			else
 				detail.event(page, ev, cx, function()
 					render(state)

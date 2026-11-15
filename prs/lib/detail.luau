@@ -331,6 +331,39 @@ local function markdown(body: string, key: string, empty: string?): Node
 	return keyed(ui.md(text), key)
 end
 
+-- The GitHub stack this PR is a layer of, folded to one line: every layer bottom first, this one
+-- marked; picking another layer opens it (the host does, as `layer=<number>`).
+local function stack_card(p: pr.Pr, s: pr.Stack): Node
+	local rows: { Node } = {}
+	for _, l in s.layers do
+		local here = l.number == p.number
+		local spans: { any } = {
+			ui.span(string.format("%2d  ", l.position), "dim mono"),
+			ui.span("#" .. l.number .. "  ", "muted"),
+			ui.span(l.title, if here then "strong" else nil),
+			ui.span("  " .. pr.state_label(l), pr.state_tone(l)),
+		}
+		local decision = DECISION[l.review]
+		if decision and l.state == "open" then
+			table.insert(spans, ui.span(" · " .. decision[1], decision[2]))
+		end
+		if here then
+			table.insert(spans, ui.span("  ← this one", "dim"))
+		end
+		local row = keyed(ui.text(spans), "s" .. l.number)
+		table.insert(rows, if here then row else clicky(row, "layer=" .. l.number))
+	end
+	table.insert(rows, keyed(ui.text({ ui.span("Each layer merges into the one under it; the bottom one into " .. s.base .. ".", "dim") }), "foot"))
+	local merged = 0
+	for _, l in s.layers do
+		if l.state == "merged" then
+			merged += 1
+		end
+	end
+	local head = "Stack · " .. s.position .. " of " .. s.size .. (if merged > 0 then " · " .. merged .. " merged" else "")
+	return keyed(with(ui.section(head, rows), { collapsible = true, collapsed = true }), "stack")
+end
+
 local function header(d: Detail): Node
 	local p = d.pr
 	local ref = d.ref
@@ -391,6 +424,10 @@ local function header(d: Detail): Node
 			rows,
 			keyed(ui.text({ ui.span(util.plural(p.behind_by :: number, "commit") .. " behind " .. p.base, "warning"), ui.span(" · u updates the branch", "dim") }), "behind")
 		)
+	end
+	local s = p.stack
+	if s and #s.layers > 1 then
+		table.insert(rows, stack_card(p, s))
 	end
 	if #p.reviewers > 0 then
 		local spans: { any } = { ui.span("Reviewers  ", "dim") }

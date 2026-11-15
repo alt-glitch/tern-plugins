@@ -34,8 +34,16 @@ Enter opens the selected pull request's page.
 The header shows the repository and number, the review decision and state, the title, who opened
 it and when, the base and head branches, its size, whether it conflicts with its base or how far
 behind it is, its reviewers (green approved, red changes requested, dim not yet answered) and its
-labels. The title and author show at once from the list row while GitHub answers. Three tabs
-follow:
+labels. The title and author show at once from the list row while GitHub answers.
+
+A pull request in a GitHub stack (pull requests that each merge into the one under it, as `gh stack`
+makes them) gets a folded **Stack · 5 of 13** line. Opened, it lists every layer from the bottom
+with its number, title, state and review decision, and marks this one. Clicking a layer opens its
+page in place.
+
+<img src="docs/stack-card.png" alt="The page of NousResearch/hermes-agent#153155 with its Stack · 5 of 13 line opened: layers 1 to 13, each with its number, title and Open, layer 5 bold and marked this one, layer 12 also Changes requested" width="480">
+
+Three tabs follow:
 
 - **Conversation:** the description, then every comment, review, review thread and commit in
   order. Markdown renders as Tern draws it, Mermaid diagrams and tables included. A long
