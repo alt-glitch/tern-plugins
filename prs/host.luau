@@ -34,11 +34,13 @@ type Row = {
 	updated: number,
 	draft: boolean,
 	state: string, -- open | merged | closed
+	-- The pull request of the list file's checkout branch, not one the file names.
+	branch: boolean?,
 }
 
 -- A list file (`*.prs.json`): pull requests some program picked, such as the ones a Hermes
 -- session linked. See README.md for the format.
-type ListFile = { path: string, text: string, title: string, refs: { pr.Ref }, selected: string?, opened_at: number? }
+type ListFile = { path: string, text: string, title: string, refs: { pr.Ref }, selected: string?, opened_at: number?, cwd: string? }
 
 type State = {
 	cx: BlockCx,
@@ -136,6 +138,28 @@ local function parse_search(value: any): { Row }?
 	return rows
 end
 
+-- The list file's rows, with what GitHub said about each; `branch` is the checkout's own one.
+local function file_rows(refs: { pr.Ref }, facts: { [string]: { [string]: any } }?, branch: pr.Ref?): { Row }
+	local rows: { Row } = {}
+	for _, ref in refs do
+		local f = if facts then facts[pr.key(ref)] else nil
+		local p: { [string]: any } = f or {}
+		table.insert(rows, {
+			id = pr.key(ref),
+			repo = ref.repo,
+			number = ref.number,
+			title = if f then util.str(p.title) else ref.url,
+			author = util.login(p.author),
+			url = ref.url,
+			updated = util.epoch(p.updatedAt) or 0,
+			draft = p.isDraft == true,
+			state = if p.state == "MERGED" then "merged" elseif p.state == "CLOSED" then "closed" else "open",
+			branch = branch ~= nil and pr.key(branch) == pr.key(ref),
+		})
+	end
+	return rows
+end
+
 -- The list file's pull requests, with titles and states from one GraphQL query.
 local function load_file(state: State)
 	local file = state.file
@@ -143,34 +167,45 @@ local function load_file(state: State)
 		return
 	end
 	state.pending += 1
-	pr.summaries(file.refs, function(facts, problem)
+	local function summarize(branch: pr.Ref?)
+		local refs = table.clone(file.refs)
+		if branch then
+			table.insert(refs, branch)
+		end
+		pr.summaries(refs, function(facts, problem)
+			if not alive(state) or state.pending == 0 then
+				return
+			end
+			state.pending -= 1
+			if problem then
+				state.problem = problem
+			end
+			state.lists.file = file_rows(refs, facts, branch)
+			state.fetched = os.time()
+			render(state)
+		end)
+	end
+	local cwd = file.cwd
+	if not cwd then
+		summarize(nil)
+		return
+	end
+	-- The checkout's branch may have a pull request of its own; `gh` answers non-zero when not.
+	gh.json({ "pr", "view", "--json", "number,url" }, function(value, _)
 		if not alive(state) or state.pending == 0 then
 			return
 		end
-		state.pending -= 1
-		if problem then
-			state.problem = problem
+		local ref = if type(value) == "table" and type(value.url) == "string" then pr.ref(value.url) else nil
+		if ref then
+			for _, r in file.refs do
+				if pr.key(r) == pr.key(ref) then
+					ref = nil
+					break
+				end
+			end
 		end
-		local rows: { Row } = {}
-		for _, ref in file.refs do
-			local f = if facts then facts[pr.key(ref)] else nil
-			local p: { [string]: any } = f or {}
-			table.insert(rows, {
-				id = pr.key(ref),
-				repo = ref.repo,
-				number = ref.number,
-				title = if f then util.str(p.title) else ref.url,
-				author = util.login(p.author),
-				url = ref.url,
-				updated = util.epoch(p.updatedAt) or 0,
-				draft = p.isDraft == true,
-				state = if p.state == "MERGED" then "merged" elseif p.state == "CLOSED" then "closed" else "open",
-			})
-		end
-		state.lists.file = rows
-		state.fetched = os.time()
-		render(state)
-	end)
+		summarize(ref)
+	end, cwd)
 end
 
 -- Runs every list's query in the background; each answer re-renders the block.
@@ -229,6 +264,7 @@ local function read_file(path: string): ListFile?
 		refs = refs,
 		selected = if util.str(data.selected) ~= "" then string.lower(util.str(data.selected)) else nil,
 		opened_at = if type(data.opened_at) == "number" then data.opened_at else nil,
+		cwd = if string.sub(util.str(data.cwd), 1, 1) == "/" then util.str(data.cwd) else nil,
 	}
 end
 
@@ -356,14 +392,28 @@ local function shown(state: State): Shown
 				},
 				title = row.url,
 			}
-			if others then
+			if row.branch then
+				-- The badge after the title can wrap out of sight in a narrow pane; the icon and the
+				-- state column cannot.
+				item.icon = "branch"
+				if not STATE_WORD[row.state] then
+					item.facts.state = { ui.span("branch", "accent") }
+				end
+			elseif others then
 				item.mark = { text = row.author }
 			else
 				item.icon = "merge"
 			end
+			local badges = {}
+			if row.branch then
+				table.insert(badges, { text = "branch", tone = "accent" })
+			end
 			if row.draft then
-				item.badges = { { text = "draft", tone = "warning" } }
+				table.insert(badges, { text = "draft", tone = "warning" })
 				item.tone = "muted"
+			end
+			if #badges > 0 then
+				item.badges = badges
 			end
 			table.insert(items, item)
 			table.insert(order, row.id)

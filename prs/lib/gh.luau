@@ -35,9 +35,10 @@ function M.problem_of(result: ProcessResult): Problem
 	}
 end
 
--- Starts `gh` with `args`, trying each place it may be installed. Calls `done` with the result,
--- or returns the spawn error of the last attempt when none starts.
-function M.run(args: { string }, done: (ProcessResult) -> ()): string?
+-- Starts `gh` with `args` in `cwd` (the daemon's directory when nil), trying each place it may be
+-- installed. Calls `done` with the result, or returns the spawn error of the last attempt when none
+-- starts.
+function M.run(args: { string }, done: (ProcessResult) -> (), cwd: string?): string?
 	local last = "gh is not on this machine's PATH"
 	for _, gh in CANDIDATES do
 		if gh == "gh" or tern.fs.exists(gh) then
@@ -48,6 +49,7 @@ function M.run(args: { string }, done: (ProcessResult) -> ()): string?
 			local opts: ProcessOptions = {
 				timeout_ms = TIMEOUT_MS,
 				env = { GH_PROMPT_DISABLED = "1", GH_NO_UPDATE_NOTIFIER = "1", NO_COLOR = "1" },
+				cwd = cwd,
 			}
 			local ok, err = pcall(function()
 				tern.process.run(argv, opts, function(result: ProcessResult, _)
@@ -64,7 +66,7 @@ function M.run(args: { string }, done: (ProcessResult) -> ()): string?
 end
 
 -- Runs `gh` and decodes its JSON output: `done(value, nil)` or `done(nil, problem)`.
-function M.json(args: { string }, done: (any, Problem?) -> ())
+function M.json(args: { string }, done: (any, Problem?) -> (), cwd: string?)
 	local spawn_error = M.run(args, function(result)
 		if result.status ~= 0 then
 			done(nil, M.problem_of(result))
@@ -76,7 +78,7 @@ function M.json(args: { string }, done: (any, Problem?) -> ())
 		else
 			done(nil, { kind = "failed", text = "gh printed something other than JSON.", detail = util.first_lines(result.stdout, 4) })
 		end
-	end)
+	end, cwd)
 	if spawn_error then
 		done(nil, { kind = "missing", text = "Tern could not start the GitHub CLI.", detail = spawn_error })
 	end

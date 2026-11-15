@@ -149,6 +149,13 @@ program, and a new `selected` (or a new `opened_at` with the same one) opens tha
 | `prs` | Each a GitHub pull request URL, or `repository` and `number` |
 | `selected` | Optional `owner/repo#number`, any case: opens that pull request's page |
 | `opened_at` | Optional number, such as the time of the pick: a new value opens `selected` again |
+| `cwd` | Optional absolute path of a git checkout: adds the pull request of its current branch |
+
+With `cwd`, the block runs `gh pr view` in that directory. When the checkout's branch has a pull
+request that `prs` does not name, it joins the tab with a branch icon and the word `branch` in place
+of its state. It is read again on every refresh, so switching branches changes it.
+
+<img src="docs/branch-pr.png" alt="The This session tab: the pull request of the checkout's branch, NousResearch/hermes-agent#155954, with a branch icon and the word branch, above a pull request the file names" width="480">
 
 The file name must end in `.prs.json`. Run `tern open <file>` from a pane to open it to the right of
 that pane. Opening the same file again focuses its block instead of adding one. `tern open` then
