@@ -320,6 +320,11 @@ local function markdown(body: string, key: string, empty: string?): Node
 	local text = string.gsub(body, "<!%-%-.-%-%->", "")
 	text = string.gsub(text, "<summary>%s*(.-)%s*</summary>", "**%1**")
 	text = string.gsub(text, "</?details[^>]*>", "")
+	-- Review bots badge findings with a linked image (`<a><img alt="P1"></a>`): keep the label.
+	text = string.gsub(text, "<img[^>]-alt=\"([^\"]*)\"[^>]*>", "**%1**")
+	text = string.gsub(text, "<img[^>]*>", "")
+	text = string.gsub(text, "<a%s[^>]*>", "")
+	text = string.gsub(text, "</a>", "")
 	if not string.match(text, "%S") then
 		return keyed(ui.text({ ui.span(empty or "No description provided.", "muted") }), key)
 	end
