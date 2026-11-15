@@ -38,14 +38,18 @@ labels. The title and author show at once from the list row while GitHub answers
 follow:
 
 - **Conversation:** the description, then every comment, review, review thread and commit in
-  order. Markdown renders as Tern draws it, Mermaid diagrams and tables included. Resolved and
+  order. Markdown renders as Tern draws it, Mermaid diagrams and tables included. A long
+  description shows its first 12 lines and a "more lines" button that opens the rest. Resolved and
   outdated threads start folded, and runs of commits fold into one line. Comments and reviews by
   bots (GitHub Apps such as CI and review bots) start hidden behind a line that counts them; their
-  review threads on code lines stay.
+  review threads on code lines stay. **All**, **Comments** and **Commits** at the top choose what
+  shows, and **Newest first** (`n`) turns the order around. The block remembers both.
 - **Checks:** the checks of the latest commit in four groups: needs attention and running open,
   passed and skipped folded, each with its workflow, its result and how long it took.
 - **Files:** each changed file as Tern's edit card with its diff. Deleted files and diffs over
   400 lines start folded.
+
+<img src="docs/conversation-filters.png" alt="The Conversation tab of NousResearch/hermes-agent#151819 with Comments and Newest first on: the description cut at 12 lines over a 112 more lines button, then an approval and a change request" width="480">
 
 <img src="docs/page-files.png" alt="The Files tab of NousResearch/hermes-agent#155575: an Added card for apps/desktop/e2e/design-mode-native.spec.ts +132 −0 with its diff, syntax highlighted" width="480">
 
@@ -95,6 +99,7 @@ On a page:
 | `m` / `x` / `a` | Merge / close / approve, after a question (Enter or `y` confirms, Esc or `n` cancels) |
 | `v` | Opens the review form |
 | `b` | Shows or hides comments by bots |
+| `n` | Conversation newest first, or oldest first (remembered) |
 | `d` / `u` / `f` | Ready for review / update branch / re-run failed jobs |
 | `r`, ctrl+r | Reads it again |
 

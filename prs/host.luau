@@ -55,6 +55,7 @@ type State = {
 	watch: TimerHandle?,
 	-- The pull request page, while one is open.
 	page: detail.Detail?,
+	prefs: detail.Prefs,
 }
 
 -- A pane id survives Restart; the state object identifies this block run.
@@ -232,7 +233,7 @@ local function read_file(path: string): ListFile?
 end
 
 local function open_page(state: State, ref: pr.Ref, seed: { title: string, author: string }?)
-	local page = detail.new(ref, seed)
+	local page = detail.new(ref, state.prefs, seed)
 	state.page = page
 	detail.load(page, function()
 		render(state)
@@ -605,6 +606,7 @@ tern.block.define("list", {
 			timer = nil,
 			watch = nil,
 			page = nil,
+			prefs = detail.prefs(was.prefs),
 		}
 		running[cx.pane] = state
 		refresh(state)
@@ -700,6 +702,7 @@ tern.block.define("list", {
 			tab = if state.tab == "file" then nil else state.tab,
 			drafts = state.drafts,
 			page = if state.page then pr.key(state.page.ref) else nil,
+			prefs = state.prefs,
 		}
 	end,
 })

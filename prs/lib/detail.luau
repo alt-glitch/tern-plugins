@@ -13,8 +13,16 @@ local ui = tern.ui
 
 local M = {}
 
+-- What the block remembers across pages and restarts.
+export type Prefs = {
+	filter: string, -- all | comments | commits: what the Conversation tab shows
+	newest: boolean, -- the Conversation tab newest first
+	method: string?, -- the merge method used last
+}
+
 export type Detail = {
 	ref: pr.Ref,
+	prefs: Prefs,
 	pr: pr.Pr?,
 	problem: gh.Problem?,
 	loading: boolean,
@@ -65,9 +73,23 @@ local CHECK = {
 }
 local FILE_TITLE = { added = "Added", copied = "Copied", modified = "Changed", removed = "Deleted", renamed = "Renamed" }
 
-function M.new(ref: pr.Ref, seed: { title: string, author: string }?): Detail
+local FILTERS = { "all", "comments", "commits" }
+local FILTER_LABEL = { all = "All", comments = "Comments", commits = "Commits" }
+
+-- Prefs from what `save` stored, with defaults for anything missing or unknown.
+function M.prefs(saved: any): Prefs
+	local was = if type(saved) == "table" then saved else {}
+	return {
+		filter = if table.find(FILTERS, was.filter) then was.filter else "all",
+		newest = was.newest == true,
+		method = if type(was.method) == "string" then was.method else nil,
+	}
+end
+
+function M.new(ref: pr.Ref, prefs: Prefs, seed: { title: string, author: string }?): Detail
 	return {
 		ref = ref,
+		prefs = prefs,
 		pr = nil,
 		problem = nil,
 		loading = false,
@@ -382,10 +404,32 @@ local function comment(key: string, who: { any }, at: number, body: string, url:
 	return keyed(ui.card(head, children), key)
 end
 
+local function filter_bar(d: Detail): Node
+	local items = {}
+	for _, f in FILTERS do
+		table.insert(items, { id = "filter:" .. f, label = FILTER_LABEL[f] })
+	end
+	local newest = d.prefs.newest
+	return with(
+		ui.row({
+			ui.node("tabs", { key = "f", variant = "segmented", active = "filter:" .. d.prefs.filter, items = items }),
+			ui.node("spacer", { key = "fill", grow = 1 }),
+			keyed(
+				clicky(ui.button("Newest first", { keys = { "n" }, size = "sm", variant = if newest then "primary" else nil :: any, icon = if newest then "check" else nil }), "newest"),
+				"newest"
+			),
+		}),
+		{ align = "center", gap = "sm" }
+	)
+end
+
+local DESCRIPTION_LINES = 12
+
 local function conversation(d: Detail, p: pr.Pr): { Node }
-	local out: { Node } = {
-		comment("desc", { ui.span(p.author, "strong"), ui.span(" opened this", "muted") }, util.epoch(p.created) or 0, p.body, nil),
-	}
+	local desc = comment("desc:" .. p.repo .. "#" .. p.number, { ui.span(p.author, "strong"), ui.span(" opened this", "muted") }, util.epoch(p.created) or 0, p.body, nil)
+	-- A long description starts clamped, with the card's own "N more lines" control under it.
+	desc = with(desc, { collapsible = true, collapsed = true, preview = { lines = DESCRIPTION_LINES } })
+	local out: { Node } = { keyed(filter_bar(d), "filters"), desc }
 	if not d.activity then
 		local problem = d.activity_problem
 		table.insert(out, keyed(ui.text({ ui.span(if problem then problem.text else "Reading the conversation…", if problem then "error" else "muted") }), "load"))
@@ -429,7 +473,14 @@ local function conversation(d: Detail, p: pr.Pr): { Node }
 		run = {}
 	end
 	local hidden = 0
-	for i, a in d.activity :: { pr.Activity } do
+	local filter = d.prefs.filter
+	local list = d.activity :: { pr.Activity }
+	for n = 1, #list do
+		local i = if d.prefs.newest then #list + 1 - n else n
+		local a = list[i]
+		if (filter == "commits") ~= (a.kind == "commit") and filter ~= "all" then
+			continue
+		end
 		if a.bot and not d.bots then
 			hidden += 1
 			continue
@@ -486,6 +537,9 @@ local function conversation(d: Detail, p: pr.Pr): { Node }
 		end
 	end
 	flush()
+	if filter ~= "all" and #out == 2 then
+		table.insert(out, keyed(ui.text({ ui.span(if filter == "commits" then "No commits." else "No comments yet.", "muted") }), "none"))
+	end
 	if hidden > 0 or d.bots then
 		local text = if d.bots then "Hide comments by bots" else util.plural(hidden, "comment") .. " by bots hidden. Show them"
 		table.insert(out, clicky(keyed(ui.text({ ui.span(text, "dim"), ui.span("  b", "dim mono") }), "bots"), "bots"))
@@ -721,6 +775,9 @@ function M.event(d: Detail, ev: UiEvent, cx: BlockCx, render: () -> ()): boolean
 			r.kind = string.sub(ev.item, 8)
 		end
 		return true
+	elseif ev.ev == "select" and type(ev.item) == "string" and string.sub(ev.item, 1, 7) == "filter:" then
+		d.prefs.filter = string.sub(ev.item, 8)
+		return true
 	elseif ev.ev == "focus" and d.review and ev.id then
 		cx:frame({ { "focus", ev.id } })
 		return true
@@ -747,6 +804,8 @@ function M.event(d: Detail, ev: UiEvent, cx: BlockCx, render: () -> ()): boolean
 		M.open(d, cx)
 	elseif a == "bots" then
 		d.bots = not d.bots
+	elseif a == "newest" then
+		d.prefs.newest = not d.prefs.newest
 	elseif a == "do" and (v == "merge" or v == "close" or v == "approve") then
 		if d.pr and pr.can(v, d.pr) then
 			d.confirm = v
@@ -804,6 +863,8 @@ function M.key(d: Detail, key: Key, cx: BlockCx, render: () -> ()): boolean
 		cx:toast("info", "Copied the pull request's URL")
 	elseif bare and name == "b" then
 		d.bots = not d.bots
+	elseif bare and name == "n" and d.tab == "conversation" then
+		d.prefs.newest = not d.prefs.newest
 	elseif bare and (name == "m" or name == "x" or name == "a") then
 		local v = if name == "m" then "merge" elseif name == "a" then "approve" else "close"
 		if d.pr and pr.can(v, d.pr) then
